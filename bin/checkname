@@ -4,189 +4,199 @@ import os
 import unicodedata
 import re
 
+# Constants for standard and special file names/extensions
 STANDARD_NAMES = ["CMakeLists.txt", "LICENSE", "README", "README.md", "Dockerfile"]
-STANDARD_EXTENSIONS = [".AppImage", ".FCStd", ".ms14", ".mp4", ".m2ts"]
-IGNORE_EXTENSIONS = [".c", ".h", ".py"]
+STANDARD_EXTENSIONS = [".AppImage", ".FCStd"]
+SPECIAL_EXTENSIONS = [".c", ".h", ".py"]
 
+# Regex patterns for name validation
 SEPARATOR = r'_'
-VALID_CHARACTERS_NAME = r'a-z0-9'
-VALID_CHARACTERS_NAME_IGNORED_EXTENSIONS = r'a-zA-Z0-9'
-VALID_CHARACTERS_SEPARATOR_IGNORED_EXTENSIONS = r'_-'
+PATTERN_VALID_NAME = r'^[a-z0-9]+(?:_[a-z0-9]+)*$'
+PATTERN_INVALID_CHARACTERS = r'[^a-z0-9]+'
+PATTERN_EXTENDED_NAME = r'^[a-zA-Z0-9]+(?:[_-][a-zA-Z0-9]+)*$'
+PATTERN_VALID_EXTENSION = r'^(\.[a-z0-9]+)?$'
 
-PATTERN_NAME = fr'^[{VALID_CHARACTERS_NAME}]+(?:{SEPARATOR}[{VALID_CHARACTERS_NAME}]+)*$'
-PATTERN_NAME_IGNORED_EXTENSIONS = fr'^[{VALID_CHARACTERS_NAME_IGNORED_EXTENSIONS}]+(?:[{VALID_CHARACTERS_SEPARATOR_IGNORED_EXTENSIONS}][{VALID_CHARACTERS_NAME_IGNORED_EXTENSIONS}]+)*$'
-PATTERN_EXTENSION = r'^(\.[a-z]+)?$'
+# Global variable for script name
+SCRIPT_NAME = os.path.basename(__file__)
 
-def print_help():
+def display_help():
     """
     Display usage instructions and available options for the script.
-    
-    Provides detailed explanations of command-line flags and their behavior.
     """
     help_message = (
-        f"Usage: {sys.argv[0]} <path> [<path> ...] [--dry-run] [--normalize-name] [--no-ignore]\n"
-        "\n"
-        "Options:\n"
-        "  --dry-run, -d         Show the renaming actions without making changes.\n"
-        "  --normalize-name, -n  Normalize file and directory names.\n"
-        "  --no-ignore           Process all files, including those in ignore lists.\n"
-        "  --help, -h            Display this help message.\n"
-        "\n"
-        "Description:\n"
-        "  This script normalizes file and directory names by removing accents, converting to lowercase,\n"
-        "  replacing non-alphanumeric characters with the SEPARATOR, and trimming extra separators.\n"
-        "  Files and extensions in the ignore lists (e.g., CMakeLists.txt, .c, .h) are skipped unless --no-ignore\n"
-        "  is specified."
+        f"{SCRIPT_NAME}: usage: {SCRIPT_NAME} <path> [<path> ...] [--dry-run] [--normalize-name] [--ignore-special-cases]\n"
+        "\noptions:\n"
+        "  --dry-run, -d            show the renaming actions without making changes.\n"
+        "  --normalize-name, -n     normalize file and directory names.\n"
+        "  --ignore-special-cases   process all files, including special cases.\n"
+        "  --help, -h               display this help message.\n"
+        "\ndescription:\n"
+        "  this script normalizes file and directory names by removing accents, converting to lowercase,\n"
+        "  replacing non-alphanumeric characters with underscores, and trimming extra separators.\n"
+        "  files and extensions in the standard or special lists are skipped unless --ignore-special-cases is specified."
     )
     print(help_message)
 
-def normalize_name(name):
+def matches_pattern(string, pattern):
     """
-    Normalize a file or directory name.
+    Check if a string matches a given regex pattern.
 
-    Steps include:
-    - Removing accents and diacritics.
-    - Converting to lowercase.
-    - Replacing non-alphanumeric characters with the SEPARATOR.
-    - Trimming redundant SEPARATORS.
-
-    :param name: The name to normalize.
-    :return: The normalized name.
+    :param string: The string to validate.
+    :param pattern: The regex pattern to match.
+    :return: True if the string matches the pattern, False otherwise.
     """
-    normalized = unicodedata.normalize('NFD', name)
-    normalized = ''.join(char for char in normalized if char.isascii())
-    normalized = normalized.lower()
-    normalized = re.sub(fr'[^{VALID_CHARACTERS_NAME}]+', SEPARATOR, normalized)
-    normalized = re.sub(fr'{SEPARATOR}+', SEPARATOR, normalized)  # Merge multiple SEPARATORS
-    return normalized.strip(SEPARATOR)
+    return bool(re.match(pattern, string))
 
-def check_name(paths, no_ignore):
+def is_valid_name(path, ignore_special_cases):
     """
-    Validate the names of files or directories in the provided paths.
+    Validate whether a file or directory name complies with naming conventions.
 
-    Checks each path for compliance with naming conventions and optional ignore rules.
-
-    :param paths: List of file or directory paths to validate.
-    :param no_ignore: If True, bypass ignore rules for certain files or extensions.
+    :param path: File or directory path to validate.
+    :param ignore_special_cases: Whether to bypass checks for standard and special cases.
+    :return: True if the name is valid, False otherwise.
     """
-    for path in paths:
-        name = os.path.basename(path)
+    name = os.path.basename(path)
 
-        if os.path.isfile(path):
-            if not no_ignore and name in STANDARD_NAMES:
-                continue
+    if os.path.isfile(path):
+        if not ignore_special_cases and name in STANDARD_NAMES:
+            return True
 
+        name, extension = os.path.splitext(name)
+
+        if extension == ".asc":
             name, extension = os.path.splitext(name)
 
-            if extension == ".asc":
-                name, extension = os.path.splitext(name)
+        if not ignore_special_cases and extension in SPECIAL_EXTENSIONS and matches_pattern(name, PATTERN_EXTENDED_NAME):
+            return True
 
-            if extension in STANDARD_EXTENSIONS or bool(re.match(PATTERN_EXTENSION, extension)):
-                if bool(re.match(PATTERN_NAME, name)):
-                    continue
+        if (extension in STANDARD_EXTENSIONS or matches_pattern(extension, PATTERN_VALID_EXTENSION)) \
+                and matches_pattern(name, PATTERN_VALID_NAME):
+            return True
 
-            if not no_ignore and extension in IGNORE_EXTENSIONS:
-                if bool(re.match(PATTERN_NAME_IGNORED_EXTENSIONS, name)):
-                    continue
+        return False
 
-        elif bool(re.match(PATTERN_NAME, name)):
-            continue
+    return matches_pattern(name, PATTERN_VALID_NAME)
 
-        print(f"{path}")
-
-def rename(paths, dry_run, no_ignore):
+def normalize_string(string):
     """
-    Rename files or directories in the provided paths to normalized names if necessary.
+    Normalize a string by removing accents, converting to lowercase, and replacing invalid characters.
 
-    :param paths: List of file or directory paths to rename.
-    :param dry_run: If True, only display the renaming actions without applying them.
-    :param no_ignore: If True, bypass ignore rules for certain files or extensions.
+    :param string: The string to normalize.
+    :return: The normalized string.
     """
-    for path in paths:
-        directory = os.path.dirname(path)
-        old_name = os.path.basename(path)
+    normalized = unicodedata.normalize('NFD', string)
+    normalized = ''.join(char for char in normalized if char.isascii())
+    normalized = normalized.lower()
+    normalized = re.sub(PATTERN_INVALID_CHARACTERS, SEPARATOR, normalized)
+    normalized = re.sub(fr'{SEPARATOR}+', SEPARATOR, normalized)
+    return normalized.strip(SEPARATOR)
 
-        if os.path.isfile(path):
-            if not no_ignore and old_name in STANDARD_NAMES:
-                continue
+def rename_path(original_path, new_path, dry_run):
+    """
+    Rename a file or directory, or simulate the renaming in dry-run mode.
 
-            name, extension = os.path.splitext(old_name)
+    :param original_path: Original path of the file or directory.
+    :param new_path: New path after renaming.
+    :param dry_run: If True, only display the renaming action.
+    """
+    if dry_run:
+        print(f"{SCRIPT_NAME}: dry run: {original_path} -> {new_path}")
+    else:
+        if os.path.exists(new_path):
+            print(f"{SCRIPT_NAME}: error: {new_path} already exists, skipping.")
+            return
 
-            if extension not in STANDARD_EXTENSIONS and not bool(re.match(PATTERN_EXTENSION, extension)):
+        try:
+            os.rename(original_path, new_path)
+            print(f"{SCRIPT_NAME}: renamed: {original_path} -> {new_path}")
+        except OSError as error:
+            print(f"{SCRIPT_NAME}: error renaming {original_path} to {new_path}: {error}")
+
+def normalize_name(path, ignore_special_cases, dry_run):
+    """
+    Normalize the name of a file or directory.
+
+    :param path: Path to the file or directory.
+    :param ignore_special_cases: Whether to bypass checks for special cases.
+    :param dry_run: If True, only display the renaming action.
+    """
+    directory = os.path.dirname(path)
+    name = os.path.basename(path)
+
+    if os.path.isfile(path):
+        name, extension = os.path.splitext(name)
+
+        if extension not in STANDARD_EXTENSIONS and not matches_pattern(extension, PATTERN_VALID_EXTENSION):
+            extension = extension.lower()
+
+        if not ignore_special_cases and extension in SPECIAL_EXTENSIONS:
+            print(f"{SCRIPT_NAME}: skipping special file: {path}")
+            return
+
+        second_extension = ""
+        if extension == ".asc":
+            second_extension = extension
+            name, extension = os.path.splitext(name)
+            if extension not in STANDARD_EXTENSIONS and not matches_pattern(extension, PATTERN_VALID_EXTENSION):
                 extension = extension.lower()
 
-            if not no_ignore and extension in IGNORE_EXTENSIONS:
-                continue
+        new_name = normalize_string(name) + extension + second_extension
+    else:
+        new_name = normalize_string(name)
 
-            second_extension = ""
-            if extension == ".asc":
-                second_extension = extension
-                name, extension = os.path.splitext(name)
-                if extension not in STANDARD_EXTENSIONS and not bool(re.match(PATTERN_EXTENSION, extension)):
-                    extension = extension.lower()
-
-            new_name = normalize_name(name) + extension + second_extension
-        else:
-            new_name = normalize_name(old_name)
-
-        if old_name != new_name:
-            new_path = os.path.join(directory, new_name)
-            if dry_run:
-                print(f"Dry run: {path} -> {new_path}")
-            else:
-                if os.path.exists(new_path):
-                    print(f"Error: {new_path} already exists, skipping.")
-                    continue
-
-                try:
-                    os.rename(path, new_path)
-                    print(f"Renamed: {path} -> {new_path}")
-                except OSError as error:
-                    print(f"Error renaming {path} to {new_path}: {error}")
+    rename_path(path, os.path.join(directory, new_name), dry_run)
 
 def main():
     """
-    Entry point for the script.
-
-    Processes command-line arguments to determine the operation mode and applies 
-    either renaming or validation logic to the specified paths.
+    Entry point for the script. Process command-line arguments and apply renaming or validation.
     """
     if len(sys.argv) < 2:
-        print(f"Run '{sys.argv[0]} --help' for usage information.")
+        print(f"{SCRIPT_NAME}: run '{SCRIPT_NAME} --help' for usage information.")
         sys.exit(1)
 
     dry_run = False
     normalize_name_flag = False
-    no_ignore = False
+    ignore_special_cases = False
     paths = []
 
     for arg in sys.argv[1:]:
         if os.path.exists(arg):
             paths.append(arg)
         elif arg in ("--help", "-h"):
-            print_help()
+            display_help()
             sys.exit(0)
         elif arg in ("--dry-run", "-d"):
             dry_run = True
         elif arg in ("--normalize-name", "-n"):
             normalize_name_flag = True
-        elif arg == "--no-ignore":
-            no_ignore = True
+        elif arg == "--ignore-special-cases":
+            ignore_special_cases = True
         elif arg.startswith("-"):
-            print(f"Error: Unrecognized option '{arg}'")
-            sys.exit(1)
+            for flag in arg[1:]:
+                if flag == 'n':
+                    normalize_name_flag = True
+                elif flag == 'd':
+                    dry_run = True
+                elif flag == 'h':
+                    display_help()
+                    sys.exit(0)
+                else:
+                    print(f"{SCRIPT_NAME}: error: unrecognized option '{flag}'")
+                    sys.exit(1)
         else:
-            print(f"Error: Invalid path: {arg}")
+            print(f"{SCRIPT_NAME}: error: invalid path: {arg}")
             sys.exit(1)
 
     if not paths:
-        print(f"Run '{sys.argv[0]} --help' for usage information.")
+        print(f"{SCRIPT_NAME}: run '{SCRIPT_NAME} --help' for usage information.")
         sys.exit(1)
 
-    if normalize_name_flag or dry_run:
-        rename(paths, dry_run, no_ignore)
-    else:
-        check_name(paths, no_ignore)
+    for path in paths:
+        if not is_valid_name(path, ignore_special_cases):
+            if normalize_name_flag:
+                normalize_name(path, ignore_special_cases, dry_run)
+            else:
+                print(f"{path}")
 
 if __name__ == "__main__":
     main()

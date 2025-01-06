@@ -3,6 +3,7 @@ import sys
 import os
 import unicodedata
 import re
+from collections import namedtuple
 
 # Constants for standard and special file names/extensions
 STANDARD_NAMES = ["CMakeLists.txt", "LICENSE", "README", "README.md", "Dockerfile"]
@@ -18,6 +19,8 @@ PATTERN_VALID_EXTENSION = r'^(\.[a-z0-9]+)?$'
 
 # Global variable for script name
 SCRIPT_NAME = os.path.basename(__file__)
+
+Flags = namedtuple('Flags', ['dry_run', 'ignore_special_cases', 'normalize_name'])
 
 def display_help():
     """
@@ -47,18 +50,18 @@ def matches_pattern(string, pattern):
     """
     return bool(re.match(pattern, string))
 
-def is_valid_name(path, ignore_special_cases):
+def is_valid_name(path, flags):
     """
     Validate whether a file or directory name complies with naming conventions.
 
     :param path: File or directory path to validate.
-    :param ignore_special_cases: Whether to bypass checks for standard and special cases.
+    :param flags: Flags indicating the script behavior.
     :return: True if the name is valid, False otherwise.
     """
     name = os.path.basename(path)
 
     if os.path.isfile(path):
-        if not ignore_special_cases and name in STANDARD_NAMES:
+        if not flags.ignore_special_cases and name in STANDARD_NAMES:
             return True
 
         name, extension = os.path.splitext(name)
@@ -66,7 +69,7 @@ def is_valid_name(path, ignore_special_cases):
         if extension == ".asc":
             name, extension = os.path.splitext(name)
 
-        if not ignore_special_cases and extension in SPECIAL_EXTENSIONS and matches_pattern(name, PATTERN_EXTENDED_NAME):
+        if not flags.ignore_special_cases and extension in SPECIAL_EXTENSIONS and matches_pattern(name, PATTERN_EXTENDED_NAME):
             return True
 
         if (extension in STANDARD_EXTENSIONS or matches_pattern(extension, PATTERN_VALID_EXTENSION)) \
@@ -91,15 +94,15 @@ def normalize_string(string):
     normalized = re.sub(fr'{SEPARATOR}+', SEPARATOR, normalized)
     return normalized.strip(SEPARATOR)
 
-def rename_path(original_path, new_path, dry_run):
+def rename_path(original_path, new_path, flags):
     """
     Rename a file or directory, or simulate the renaming in dry-run mode.
 
     :param original_path: Original path of the file or directory.
     :param new_path: New path after renaming.
-    :param dry_run: If True, only display the renaming action.
+    :param flags: Flags indicating the script behavior.
     """
-    if dry_run:
+    if flags.dry_run:
         print(f"{SCRIPT_NAME}: dry run: {original_path} -> {new_path}")
     else:
         if os.path.exists(new_path):
@@ -112,13 +115,12 @@ def rename_path(original_path, new_path, dry_run):
         except OSError as error:
             print(f"{SCRIPT_NAME}: error renaming {original_path} to {new_path}: {error}")
 
-def normalize_name(path, ignore_special_cases, dry_run):
+def normalize_name(path, flags):
     """
     Normalize the name of a file or directory.
 
     :param path: Path to the file or directory.
-    :param ignore_special_cases: Whether to bypass checks for special cases.
-    :param dry_run: If True, only display the renaming action.
+    :param flags: Flags indicating the script behavior.
     """
     directory = os.path.dirname(path)
     name = os.path.basename(path)
@@ -129,7 +131,7 @@ def normalize_name(path, ignore_special_cases, dry_run):
         if extension not in STANDARD_EXTENSIONS and not matches_pattern(extension, PATTERN_VALID_EXTENSION):
             extension = extension.lower()
 
-        if not ignore_special_cases and extension in SPECIAL_EXTENSIONS:
+        if not flags.ignore_special_cases and extension in SPECIAL_EXTENSIONS:
             print(f"{SCRIPT_NAME}: skipping special file: {path}")
             return
 
@@ -144,7 +146,7 @@ def normalize_name(path, ignore_special_cases, dry_run):
     else:
         new_name = normalize_string(name)
 
-    rename_path(path, os.path.join(directory, new_name), dry_run)
+    rename_path(path, os.path.join(directory, new_name), flags)
 
 def main():
     """
@@ -154,35 +156,42 @@ def main():
         print(f"{SCRIPT_NAME}: run '{SCRIPT_NAME} --help' for usage information.")
         sys.exit(1)
 
-    dry_run = False
-    normalize_name_flag = False
-    ignore_special_cases = False
-    paths = []
+    flags = Flags(dry_run=False, ignore_special_cases=False, normalize_name=False)
+    paths = []        
 
     for arg in sys.argv[1:]:
         if os.path.exists(arg):
             paths.append(arg)
-        elif arg in ("--help", "-h"):
-            display_help()
-            sys.exit(0)
-        elif arg in ("--dry-run", "-d"):
-            dry_run = True
-        elif arg in ("--normalize-name", "-n"):
-            normalize_name_flag = True
-        elif arg == "--ignore-special-cases":
-            ignore_special_cases = True
+        
         elif arg.startswith("-"):
-            for flag in arg[1:]:
-                if flag == 'n':
-                    normalize_name_flag = True
-                elif flag == 'd':
-                    dry_run = True
-                elif flag == 'h':
-                    display_help()
-                    sys.exit(0)
-                else:
-                    print(f"{SCRIPT_NAME}: error: unrecognized option '{flag}'")
-                    sys.exit(1)
+            if arg in ("-d", "--dry-run"):
+                flags = flags._replace(dry_run=True)
+            
+            elif arg == "--ignore-special-cases":
+                flags = flags._replace(ignore_special_cases=True)
+            
+            elif arg in ("-n", "--normalize-name"):
+                flags = flags._replace(normalize_name=True)
+
+            elif arg in ("-h", "--help"):
+                display_help()
+                sys.exit(0)
+
+            else:
+                for flag in arg[1:]:
+                    if flag == 'd':
+                        flags = flags._replace(dry_run=True)
+
+                    elif flag == 'n':
+                        flags = flags._replace(normalize_name=True)
+
+                    elif flag == 'h':
+                        display_help()
+                        sys.exit(0)
+
+                    else:
+                        print(f"{SCRIPT_NAME}: error: unrecognized option '{flag}'")
+                        sys.exit(1)
         else:
             print(f"{SCRIPT_NAME}: error: invalid path: {arg}")
             sys.exit(1)
@@ -192,9 +201,9 @@ def main():
         sys.exit(1)
 
     for path in paths:
-        if not is_valid_name(path, ignore_special_cases):
-            if normalize_name_flag:
-                normalize_name(path, ignore_special_cases, dry_run)
+        if not is_valid_name(path, flags):
+            if flags.normalize_name:
+                normalize_name(path, flags)
             else:
                 print(f"{path}")
 

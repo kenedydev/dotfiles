@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import sys
-import os
 import unicodedata
 import re
 from collections import namedtuple
+from pathlib import Path
 
 # Constants for standard and special file names/extensions
 STANDARD_NAMES = ["CMakeLists.txt", "LICENSE", "README", "README.md", "Dockerfile"]
@@ -18,7 +18,7 @@ PATTERN_EXTENDED_NAME = r'^[a-zA-Z0-9]+(?:[_-][a-zA-Z0-9]+)*$'
 PATTERN_VALID_EXTENSION = r'^(\.[a-z0-9]+)?$'
 
 # Global variable for script name
-SCRIPT_NAME = os.path.basename(__file__)
+SCRIPT_NAME = Path(__file__).name
 
 Flags = namedtuple('Flags', ['dry_run', 'ignore_special_cases', 'normalize_name'])
 
@@ -58,27 +58,20 @@ def is_valid_name(path, flags):
     :param flags: Flags indicating the script behavior.
     :return: True if the name is valid, False otherwise.
     """
-    name = os.path.basename(path)
-
-    if os.path.isfile(path):
-        if not flags.ignore_special_cases and name in STANDARD_NAMES:
+    if path.is_file():
+        if not flags.ignore_special_cases and path.name in STANDARD_NAMES:
             return True
 
-        name, extension = os.path.splitext(name)
-
-        if extension == ".asc":
-            name, extension = os.path.splitext(name)
-
-        if not flags.ignore_special_cases and extension in SPECIAL_EXTENSIONS and matches_pattern(name, PATTERN_EXTENDED_NAME):
+        if not flags.ignore_special_cases and path.suffix in SPECIAL_EXTENSIONS and matches_pattern(path.stem, PATTERN_EXTENDED_NAME):
             return True
 
-        if (extension in STANDARD_EXTENSIONS or matches_pattern(extension, PATTERN_VALID_EXTENSION)) \
-                and matches_pattern(name, PATTERN_VALID_NAME):
+        if (path.suffix in STANDARD_EXTENSIONS or matches_pattern(path.suffix, PATTERN_VALID_EXTENSION)) \
+                and matches_pattern(path.stem, PATTERN_VALID_NAME):
             return True
 
         return False
 
-    return matches_pattern(name, PATTERN_VALID_NAME)
+    return matches_pattern(path.name, PATTERN_VALID_NAME)
 
 def normalize_string(string):
     """
@@ -94,26 +87,26 @@ def normalize_string(string):
     normalized = re.sub(fr'{SEPARATOR}+', SEPARATOR, normalized)
     return normalized.strip(SEPARATOR)
 
-def rename_path(original_path, new_path, flags):
+def rename_path(path, new_path, flags):
     """
     Rename a file or directory, or simulate the renaming in dry-run mode.
 
-    :param original_path: Original path of the file or directory.
+    :param path: Original path of the file or directory.
     :param new_path: New path after renaming.
     :param flags: Flags indicating the script behavior.
     """
     if flags.dry_run:
-        print(f"{SCRIPT_NAME}: dry run: {original_path} -> {new_path}")
+        print(f"{SCRIPT_NAME}: dry run: {path} -> {new_path}")
     else:
-        if os.path.exists(new_path):
+        if new_path.exists():
             print(f"{SCRIPT_NAME}: error: {new_path} already exists, skipping.")
             return
 
         try:
-            os.rename(original_path, new_path)
-            print(f"{SCRIPT_NAME}: renamed: {original_path} -> {new_path}")
-        except OSError as error:
-            print(f"{SCRIPT_NAME}: error renaming {original_path} to {new_path}: {error}")
+            path.rename(new_path)
+            print(f"{SCRIPT_NAME}: renamed: {path} -> {new_path}")
+        except Exception as error:
+            print(f"{SCRIPT_NAME}: error renaming {path} to {new_path}: {error}")
 
 def normalize_name(path, flags):
     """
@@ -122,11 +115,8 @@ def normalize_name(path, flags):
     :param path: Path to the file or directory.
     :param flags: Flags indicating the script behavior.
     """
-    directory = os.path.dirname(path)
-    name = os.path.basename(path)
-
-    if os.path.isfile(path):
-        name, extension = os.path.splitext(name)
+    if path.is_file():
+        extension = path.suffix
 
         if extension not in STANDARD_EXTENSIONS and not matches_pattern(extension, PATTERN_VALID_EXTENSION):
             extension = extension.lower()
@@ -135,18 +125,11 @@ def normalize_name(path, flags):
             print(f"{SCRIPT_NAME}: skipping special file: {path}")
             return
 
-        second_extension = ""
-        if extension == ".asc":
-            second_extension = extension
-            name, extension = os.path.splitext(name)
-            if extension not in STANDARD_EXTENSIONS and not matches_pattern(extension, PATTERN_VALID_EXTENSION):
-                extension = extension.lower()
-
-        new_name = normalize_string(name) + extension + second_extension
+        new_name = normalize_string(path.stem) + extension
     else:
-        new_name = normalize_string(name)
+        new_name = normalize_string(path.name)
 
-    rename_path(path, os.path.join(directory, new_name), flags)
+    rename_path(path, path.parent / new_name, flags)
 
 def main():
     """
@@ -157,19 +140,20 @@ def main():
         sys.exit(1)
 
     flags = Flags(dry_run=False, ignore_special_cases=False, normalize_name=False)
-    paths = []        
+    paths = []
 
     for arg in sys.argv[1:]:
-        if os.path.exists(arg):
-            paths.append(arg)
-        
+        path = Path(arg)
+        if path.exists():
+            paths.append(path)
+
         elif arg.startswith("-"):
             if arg in ("-d", "--dry-run"):
                 flags = flags._replace(dry_run=True)
-            
+
             elif arg == "--ignore-special-cases":
                 flags = flags._replace(ignore_special_cases=True)
-            
+
             elif arg in ("-n", "--normalize-name"):
                 flags = flags._replace(normalize_name=True)
 
@@ -193,7 +177,7 @@ def main():
                         print(f"{SCRIPT_NAME}: error: unrecognized option '{flag}'")
                         sys.exit(1)
         else:
-            print(f"{SCRIPT_NAME}: error: invalid path: {arg}")
+            print(f"{SCRIPT_NAME}: error: invalid path: {path}")
             sys.exit(1)
 
     if not paths:

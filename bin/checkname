@@ -22,21 +22,23 @@ SCRIPT_NAME = Path(__file__).name
 
 Flags = namedtuple('Flags', ['dry_run', 'ignore_special_cases', 'normalize_name'])
 
-def display_help():
+def print_help():
     """
     Display usage instructions and available options for the script.
     """
     help_message = (
-        f"{SCRIPT_NAME}: usage: {SCRIPT_NAME} <path> [<path> ...] [--dry-run] [--normalize-name] [--ignore-special-cases]\n"
-        "\noptions:\n"
-        "  --dry-run, -d            show the renaming actions without making changes.\n"
-        "  --normalize-name, -n     normalize file and directory names.\n"
-        "  --ignore-special-cases   process all files, including special cases.\n"
-        "  --help, -h               display this help message.\n"
-        "\ndescription:\n"
-        "  this script normalizes file and directory names by removing accents, converting to lowercase,\n"
+        f"usage: {SCRIPT_NAME} <path> [<path> ...]\n"
+        "[-d | --dry-run] [--ignore-special-cases] [-n | --normalize-name] [-v | --verbose] [-h | --help]\n"
+        "\nOptions:\n"
+        "  -d,  --dry-run               Show the renaming actions without making changes.\n"
+        "  -n,  --normalize-name        Normalize file and directory names.\n"
+        "       --ignore-special-cases  Process all files, including special cases.\n"
+        "  -v,  --verbose               Enable verbose output for detailed logs.\n"
+        "  -h,  --help                  Display this help message.\n"
+        "\nDescription:\n"
+        "  This script normalizes file and directory names by removing accents, converting to lowercase,\n"
         "  replacing non-alphanumeric characters with underscores, and trimming extra separators.\n"
-        "  files and extensions in the standard or special lists are skipped unless --ignore-special-cases is specified."
+        "  Files and extensions in the standard or special lists are skipped unless --ignore-special-cases is specified."
     )
     print(help_message)
 
@@ -229,7 +231,7 @@ def main():
                 flags = flags._replace(normalize_name=True)
 
             elif arg in ("-h", "--help"):
-                display_help()
+                print_help()
                 sys.exit(0)
 
             else:
@@ -241,17 +243,18 @@ def main():
                         flags = flags._replace(normalize_name=True)
 
                     elif flag == 'h':
-                        display_help()
+                        print_help()
                         sys.exit(0)
 
                     else:
-                        print(f"{SCRIPT_NAME}: error: unrecognized option '{flag}'")
+                        print(f"{SCRIPT_NAME}: error: unrecognized option '{arg}'")
                         sys.exit(1)
         else:
             print(f"{SCRIPT_NAME}: error: invalid path: {path}")
             sys.exit(1)
 
     if not path_tree.next_path_node:
+        print(f"{SCRIPT_NAME}: no valid paths provided.")
         print(f"{SCRIPT_NAME}: run '{SCRIPT_NAME} --help' for usage information.")
         sys.exit(1)
 

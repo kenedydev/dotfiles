@@ -131,6 +131,77 @@ def normalize_name(path, flags):
 
     rename_path(path, path.parent / new_name, flags)
 
+class PathNode:
+    def __init__(self, name):
+        """
+        Node structure for representing a part of the file system path.
+
+        :param name: The name of the directory or file represented by this node.
+        """
+        self.name = name  # Name of the current node
+        self.path = None  # Actual Path object if this node represents a path
+        self.next_path_node = None  # List of child PathNode objects
+
+    def add_next_path_node(self, path_node):
+        """
+        Add a child PathNode to the current node.
+
+        :param path_node: The PathNode to add as a child.
+        """
+        if self.next_path_node:
+            self.next_path_node.append(path_node)
+        else:
+            self.next_path_node = [path_node]
+
+    def find_next_path_node(self, name):
+        """
+        Find or create a child PathNode with the given name.
+
+        :param name: The name of the child node to find or create.
+        :return: The existing or newly created PathNode.
+        """
+        if self.next_path_node:
+            for path_node in self.next_path_node:
+                if path_node.name == name:
+                    return path_node
+
+        new_path_node = PathNode(name)
+        self.add_next_path_node(new_path_node)
+        return new_path_node
+
+def insert_into_path_tree(path_tree, path):
+    """
+    Insert a file or directory path into the tree structure.
+
+    :param path_tree: The root PathNode of the tree.
+    :param path: The Path object to insert.
+    """
+    path_absolute = path.absolute()
+    path_node = path_tree
+
+    for part in path_absolute.parts:
+        path_node = path_node.find_next_path_node(part)
+
+    path_node.path = path
+
+def process_path_tree(path_tree, flags):
+    """
+    Process all paths in the tree structure, validating or normalizing as needed.
+
+    :param path_tree: The root PathNode of the tree.
+    :param flags: Flags indicating the script behavior.
+    """
+    if path_tree.next_path_node:
+        for path in path_tree.next_path_node:
+            process_path_tree(path, flags)
+
+    if path_tree.path:
+        if not is_valid_name(path_tree.path, flags):
+            if flags.normalize_name:
+                normalize_name(path_tree.path, flags)
+            else:
+                print(f"{path_tree.path}")
+
 def main():
     """
     Entry point for the script. Process command-line arguments and apply renaming or validation.
@@ -140,12 +211,12 @@ def main():
         sys.exit(1)
 
     flags = Flags(dry_run=False, ignore_special_cases=False, normalize_name=False)
-    paths = []
+    path_tree = PathNode(None)
 
     for arg in sys.argv[1:]:
         path = Path(arg)
         if path.exists():
-            paths.append(path)
+            insert_into_path_tree(path_tree, path)
 
         elif arg.startswith("-"):
             if arg in ("-d", "--dry-run"):
@@ -180,16 +251,11 @@ def main():
             print(f"{SCRIPT_NAME}: error: invalid path: {path}")
             sys.exit(1)
 
-    if not paths:
+    if not path_tree.next_path_node:
         print(f"{SCRIPT_NAME}: run '{SCRIPT_NAME} --help' for usage information.")
         sys.exit(1)
 
-    for path in paths:
-        if not is_valid_name(path, flags):
-            if flags.normalize_name:
-                normalize_name(path, flags)
-            else:
-                print(f"{path}")
+    process_path_tree(path_tree, flags)
 
 if __name__ == "__main__":
     main()

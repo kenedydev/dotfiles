@@ -6,9 +6,9 @@ from collections import namedtuple
 from pathlib import Path
 
 # Constants for standard and special file names/extensions
-STANDARD_NAMES = ["CMakeLists.txt", "LICENSE", "README", "README.md", "Dockerfile"]
+STANDARD_NAMES = ["CMakeLists.txt", "LICENSE", "README", "README.md", "Dockerfile", "docker-compose.yml"]
 STANDARD_EXTENSIONS = [".AppImage", ".FCStd"]
-SPECIAL_EXTENSIONS = [".c", ".h", ".py"]
+SPECIAL_EXTENSIONS = [".c", ".h", ".py", ".rb"]
 
 # Regex patterns for name validation
 SEPARATOR = r'_'

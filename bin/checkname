@@ -20,7 +20,7 @@ PATTERN_VALID_EXTENSION = r'^(\.[a-z0-9]+)?$'
 # Global variable for script name
 SCRIPT_NAME = Path(__file__).name
 
-Flags = namedtuple('Flags', ['dry_run', 'ignore_special_cases', 'normalize_name'])
+Flags = namedtuple('Flags', ['dry_run', 'ignore_special_cases', 'normalize_name', 'verbose'])
 
 def print_help():
     """
@@ -106,7 +106,8 @@ def rename_path(path, new_path, flags):
 
         try:
             path.rename(new_path)
-            print(f"{SCRIPT_NAME}: renamed: {path} -> {new_path}")
+            if flags.verbose:
+                print(f"{SCRIPT_NAME}: renamed: {path} -> {new_path}")
         except Exception as error:
             print(f"{SCRIPT_NAME}: error renaming {path} to {new_path}: {error}")
 
@@ -212,7 +213,7 @@ def main():
         print(f"{SCRIPT_NAME}: run '{SCRIPT_NAME} --help' for usage information.")
         sys.exit(1)
 
-    flags = Flags(dry_run=False, ignore_special_cases=False, normalize_name=False)
+    flags = Flags(dry_run=False, ignore_special_cases=False, normalize_name=False, verbose=False)
     path_tree = PathNode(None)
 
     for arg in sys.argv[1:]:
@@ -230,6 +231,9 @@ def main():
             elif arg in ("-n", "--normalize-name"):
                 flags = flags._replace(normalize_name=True)
 
+            elif arg in ("-v", "--verbose"):
+                flags = flags._replace(verbose=True)
+
             elif arg in ("-h", "--help"):
                 print_help()
                 sys.exit(0)
@@ -241,6 +245,9 @@ def main():
 
                     elif flag == 'n':
                         flags = flags._replace(normalize_name=True)
+
+                    elif flag == 'v':
+                        flags = flags._replace(verbose=True)
 
                     elif flag == 'h':
                         print_help()

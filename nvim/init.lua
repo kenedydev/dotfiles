@@ -140,6 +140,17 @@ use("which-key", {
     end
 })
 
+use("nvim-surround", {
+    repository = "https://github.com/kylechui/nvim-surround.git",
+    dependencies = {
+        "https://github.com/nvim-treesitter/nvim-treesitter.git",
+        "https://github.com/nvim-treesitter/nvim-treesitter-textobjects.git"
+    },
+    config = function(nvim_surround)
+        nvim_surround.setup()
+    end
+})
+
 -- Key mappings
 vim.keymap.set("n", "<C-a>", "ggVG", { noremap = true, silent = true })
 vim.keymap.set("v", "<C-c>", "\"+y", { noremap = true, silent = true })

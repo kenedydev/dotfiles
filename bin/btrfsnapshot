@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if mountpoint -q /mnt; then
+  echo "btrfsnapshot: /mnt is already mounted — aborting"
+  exit 1
+fi
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+ENV_FILE="$SCRIPT_DIR/../.env/btrfsnapshot.env"
+
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+else
+  echo "btrfsnapshot: env file not found: $ENV_FILE" >&2
+  exit 1
+fi
+
+required_vars=(
+  ROOT_UUID BOOT_UUID ROOT_SUBVOL BOOT_SUBVOL SNAP_DIR EFI_SOURCE EFI_BACKUP_DIR
+  MAX_RECENT_SNAPS DAYS_KEEP_DAILY DAYS_KEEP_WEEKLY DAYS_KEEP_MONTHLY
+)
+
+for var in "${required_vars[@]}"; do
+  if [[ -z "${!var:-}" ]]; then
+    echo "btrfsnapshot: required environment variable '$var' is not set" >&2
+    exit 1
+  fi
+done
+
+DATE_NOW=$(date '+%Y%m%d_%H%M%S')
+ROOT_MNT="/mnt/root_snap_${DATE_NOW}"
+BOOT_MNT="/mnt/boot_snap_${DATE_NOW}"
+
+# cleanup handler
+cleanup() {
+  umount "${ROOT_MNT}" &>/dev/null || true
+  umount "${BOOT_MNT}" &>/dev/null || true
+  rmdir "${ROOT_MNT}" &>/dev/null || true
+  rmdir "${BOOT_MNT}" &>/dev/null || true
+}
+trap cleanup EXIT
+
+prune_snapshots() {
+  local base_dir prefix now
+  base_dir="$1"
+  prefix="$2"
+  now=$(date -u +%s)
+
+  mapfile -t snaps < <(find "${base_dir}/${SNAP_DIR}" -maxdepth 1 -type d -name "${prefix}_*" -printf '%f\n' | sort -r)
+
+  local ts snap_epoch age_days day_key week_key
+  local recent_snaps_count=0
+  declare -A keep daily_keep weekly_keep
+
+  for snap in "${snaps[@]}"; do
+    ts="${snap#"${prefix}_"}"
+
+    if [[ $ts =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
+      snap_epoch=$(date -u -d "${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:9:2}:${ts:11:2}:${ts:13:2}" +%s)
+    else
+      echo "btrfsnapshot: invalid timestamp: $ts" >&2
+      keep[$snap]=1
+      continue
+    fi
+
+    age_days=$(((now - snap_epoch) / 86400))
+
+    if ((age_days < DAYS_KEEP_DAILY)); then
+      if ((recent_snaps_count < MAX_RECENT_SNAPS)); then
+        keep[$snap]=1
+        recent_snaps_count=$((recent_snaps_count + 1))
+      fi
+    fi
+
+    if ((age_days < DAYS_KEEP_WEEKLY)); then
+      day_key=$(date -u -d "@${snap_epoch}" +%Y%m%d)
+      if [[ -z "${daily_keep[$day_key]:-}" ]]; then
+        keep[$snap]=1
+        daily_keep[$day_key]=1
+      fi
+    fi
+
+    if ((age_days < DAYS_KEEP_MONTHLY)); then
+      week_key=$(date -u -d "@${snap_epoch}" +%G-%V)
+      if [[ -z "${weekly_keep[$week_key]:-}" ]]; then
+        keep[$snap]=1
+        weekly_keep[$week_key]=1
+      fi
+    fi
+  done
+
+  for snap in "${snaps[@]}"; do
+    if [[ -z "${keep[$snap]:-}" ]]; then
+      btrfs subvolume delete "${base_dir}/${SNAP_DIR}/$snap"
+    fi
+  done
+}
+
+mkdir -p "${ROOT_MNT}" "${BOOT_MNT}"
+
+# mount and verify root
+mount -U "${ROOT_UUID}" "${ROOT_MNT}"
+for path in "${ROOT_SUBVOL}" "${SNAP_DIR}"; do
+  [[ -d "${ROOT_MNT}/${path}" ]] || {
+    echo "btrfsnapshot: ${path} not found under ${ROOT_MNT}"
+    exit 1
+  }
+done
+
+# mount and verify boot
+mount -U "${BOOT_UUID}" "${BOOT_MNT}"
+for path in "${BOOT_SUBVOL}" "${SNAP_DIR}"; do
+  [[ -d "${BOOT_MNT}/${path}" ]] || {
+    echo "btrfsnapshot: ${path} not found under ${BOOT_MNT}"
+    exit 1
+  }
+done
+[[ -d "${EFI_SOURCE}" ]] || {
+  echo "btrfsnapshot: source ${EFI_SOURCE} not found"
+  exit 1
+}
+[[ -d "${BOOT_MNT}/${BOOT_SUBVOL}/${EFI_BACKUP_DIR}" ]] || {
+  echo "btrfsnapshot: EFI backup dir not found under ${BOOT_MNT}/${BOOT_SUBVOL}"
+  exit 1
+}
+
+# snapshot root
+PREFIX="${ROOT_SUBVOL}_autosnap"
+btrfs subvolume snapshot -r "${ROOT_MNT}/${ROOT_SUBVOL}" "${ROOT_MNT}/${SNAP_DIR}/${PREFIX}_${DATE_NOW}"
+prune_snapshots "${ROOT_MNT}" "${PREFIX}"
+
+# snapshot boot + EFI backup
+PREFIX="${BOOT_SUBVOL}_autosnap"
+rsync -a --delete "${EFI_SOURCE}/" "${BOOT_MNT}/${BOOT_SUBVOL}/${EFI_BACKUP_DIR}/"
+btrfs subvolume snapshot -r "${BOOT_MNT}/${BOOT_SUBVOL}" "${BOOT_MNT}/${SNAP_DIR}/${PREFIX}_${DATE_NOW}"
+prune_snapshots "${BOOT_MNT}" "${PREFIX}"
+
+umount "${ROOT_MNT}"
+umount "${BOOT_MNT}"

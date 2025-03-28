@@ -64,8 +64,8 @@ done
   exit 1
 }
 
-DATE_EPOCH=$(date -u +%s)
-DATE_NOW=$(date -u -d "@${DATE_EPOCH}" '+%Y%m%d_%H%M%S')
+DATE_EPOCH=$(date +%s)
+DATE_NOW=$(date -d "@${DATE_EPOCH}" '+%Y%m%d_%H%M%S')
 ROOT_MNT="/mnt/btrfsnapshot_root_${SNAP_NAME}_${DATE_EPOCH}"
 BOOT_MNT="/mnt/btrfsnapshot_boot_${SNAP_NAME}_${DATE_EPOCH}"
 
@@ -82,7 +82,7 @@ prune_snapshots() {
   local base_dir prefix now
   base_dir="$1"
   prefix="$2"
-  now=$(date -u +%s)
+  now=$(date +%s)
 
   mapfile -t snaps < <(find "${base_dir}/${SNAP_DIR}" -maxdepth 1 -type d -name "${prefix}_*" -printf '%f\n' | sort -r)
 
@@ -102,7 +102,7 @@ prune_snapshots() {
     fi
 
     if ((age_days < DAYS_KEEP_WEEKLY)); then
-      day_key=$(date -u -d "@${snap_epoch}" +%Y%m%d)
+      day_key=$(date -d "@${snap_epoch}" +%Y%m%d)
       if [[ -z "${daily_keep[$day_key]:-}" ]]; then
         keep[$snap]=1
         daily_keep[$day_key]=1
@@ -110,7 +110,7 @@ prune_snapshots() {
     fi
 
     if ((age_days < DAYS_KEEP_MONTHLY)); then
-      week_key=$(date -u -d "@${snap_epoch}" +%G%V)
+      week_key=$(date -d "@${snap_epoch}" +%G%V)
       if [[ -z "${weekly_keep[$week_key]:-}" ]]; then
         keep[$snap]=1
         weekly_keep[$week_key]=1

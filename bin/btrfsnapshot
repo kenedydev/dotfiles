@@ -6,16 +6,14 @@ if mountpoint -q /mnt; then
   exit 1
 fi
 
-SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
-SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
-ENV_FILE="$SCRIPT_DIR/../.env/btrfsnapshot.env"
+ENV_FILE="/etc/btrfsnapshot.env"
 
 [[ -f "$ENV_FILE" ]] || {
   echo "btrfsnapshot: env file not found: $ENV_FILE" >&2
   exit 1
 }
 
-# shellcheck disable=SC1090
+# shellcheck source=/etc/btrfsnapshot.env
 source "$ENV_FILE"
 
 required_vars=(

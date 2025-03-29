@@ -6,24 +6,40 @@ if mountpoint -q /mnt; then
   exit 1
 fi
 
-ENV_FILE="/etc/btrfsnapshot.env"
+CONF_FILE="/etc/btrfsnapshot.conf"
 
-[[ -f "$ENV_FILE" ]] || {
-  echo "btrfsnapshot: env file not found: $ENV_FILE" >&2
+[[ -f "$CONF_FILE" ]] || {
+  cat >"$CONF_FILE" <<'EOF'
+# retention policy
+MAX_RECENT_SNAPS=30  # maximum recent snapshots to keep
+DAYS_KEEP_DAILY=7    # period (in days) for the "daily" bucket
+DAYS_KEEP_WEEKLY=30  # period (in days) for the "weekly" bucket
+DAYS_KEEP_MONTHLY=90 # period (in days) for the "monthly" bucket
+
+# configuration (uncomment and set the appropriate values)
+# ROOT_UUID=<root mount point UUID>
+# BOOT_UUID=<boot mount point UUID>
+# ROOT_SUBVOL=<root subvolume name>
+# BOOT_SUBVOL=<boot subvolume name>
+# SNAP_SUBVOL=<subvolume to save snapshots>
+# EFI_SOURCE=<EFI files source>
+# EFI_BACKUP_DIR=<EFI backup directory>
+EOF
+  echo "btrfsnapshot: no configuration file found. configuration file created at $CONF_FILE" >&2
   exit 1
 }
 
-# shellcheck source=/etc/btrfsnapshot.env
-source "$ENV_FILE"
+# shellcheck source=/etc/btrfsnapshot.conf
+source "$CONF_FILE"
 
 required_vars=(
-  ROOT_UUID BOOT_UUID ROOT_SUBVOL BOOT_SUBVOL SNAP_DIR EFI_SOURCE EFI_BACKUP_DIR
+  ROOT_UUID BOOT_UUID ROOT_SUBVOL BOOT_SUBVOL SNAP_SUBVOL EFI_SOURCE EFI_BACKUP_DIR
   MAX_RECENT_SNAPS DAYS_KEEP_DAILY DAYS_KEEP_WEEKLY DAYS_KEEP_MONTHLY
 )
 
 for var in "${required_vars[@]}"; do
   [[ -n "${!var:-}" ]] || {
-    echo "btrfsnapshot: required environment variable '$var' is not set" >&2
+    echo "btrfsnapshot: required variable '$var' is not set. please configure it in $CONF_FILE" >&2
     exit 1
   }
 done
@@ -84,7 +100,7 @@ prune_snapshots() {
   prefix="$2"
   now=$(date +%s)
 
-  mapfile -t snaps < <(find "${base_dir}/${SNAP_DIR}" -maxdepth 1 -type d -name "${prefix}_*" -printf '%f\n' | sort -r)
+  mapfile -t snaps < <(find "${base_dir}/${SNAP_SUBVOL}" -maxdepth 1 -type d -name "${prefix}_*" -printf '%f\n' | sort -r)
 
   local snap_epoch age_days day_key week_key
   local recent_snaps_count=0
@@ -120,7 +136,7 @@ prune_snapshots() {
 
   for snap in "${snaps[@]}"; do
     if [[ -z "${keep[$snap]:-}" ]]; then
-      btrfs subvolume delete "${base_dir}/${SNAP_DIR}/$snap"
+      btrfs subvolume delete "${base_dir}/${SNAP_SUBVOL}/$snap"
     fi
   done
 }
@@ -129,7 +145,7 @@ mkdir -p "${ROOT_MNT}" "${BOOT_MNT}"
 
 # mount and verify root
 mount -U "${ROOT_UUID}" "${ROOT_MNT}"
-for path in "${ROOT_SUBVOL}" "${SNAP_DIR}"; do
+for path in "${ROOT_SUBVOL}" "${SNAP_SUBVOL}"; do
   [[ -d "${ROOT_MNT}/${path}" ]] || {
     echo "btrfsnapshot: ${path} not found under ${ROOT_MNT}" >&2
     exit 1
@@ -138,31 +154,28 @@ done
 
 # mount and verify boot
 mount -U "${BOOT_UUID}" "${BOOT_MNT}"
-for path in "${BOOT_SUBVOL}" "${SNAP_DIR}"; do
+for path in "${BOOT_SUBVOL}" "${SNAP_SUBVOL}"; do
   [[ -d "${BOOT_MNT}/${path}" ]] || {
     echo "btrfsnapshot: ${path} not found under ${BOOT_MNT}" >&2
     exit 1
   }
 done
 [[ -d "${EFI_SOURCE}" ]] || {
-  echo "btrfsnapshot: source ${EFI_SOURCE} not found" >&2
+  echo "btrfsnapshot: EFI files source ${EFI_SOURCE} not found" >&2
   exit 1
 }
 [[ -d "${BOOT_MNT}/${BOOT_SUBVOL}/${EFI_BACKUP_DIR}" ]] || {
-  echo "btrfsnapshot: EFI backup dir not found under ${BOOT_MNT}/${BOOT_SUBVOL}" >&2
+  echo "btrfsnapshot: EFI backup dir ${EFI_BACKUP_DIR} not found under ${BOOT_MNT}/${BOOT_SUBVOL}" >&2
   exit 1
 }
 
 # snapshot root
 PREFIX="${ROOT_SUBVOL}_btrfsnapshot"
-btrfs subvolume snapshot -r "${ROOT_MNT}/${ROOT_SUBVOL}" "${ROOT_MNT}/${SNAP_DIR}/${PREFIX}_${DATE_NOW}_${SNAP_NAME}_${DATE_EPOCH}"
+btrfs subvolume snapshot -r "${ROOT_MNT}/${ROOT_SUBVOL}" "${ROOT_MNT}/${SNAP_SUBVOL}/${PREFIX}_${DATE_NOW}_${SNAP_NAME}_${DATE_EPOCH}"
 prune_snapshots "${ROOT_MNT}" "${PREFIX}"
 
 # snapshot boot + EFI backup
 PREFIX="${BOOT_SUBVOL}_btrfsnapshot"
 rsync -a --delete "${EFI_SOURCE}/" "${BOOT_MNT}/${BOOT_SUBVOL}/${EFI_BACKUP_DIR}/"
-btrfs subvolume snapshot -r "${BOOT_MNT}/${BOOT_SUBVOL}" "${BOOT_MNT}/${SNAP_DIR}/${PREFIX}_${DATE_NOW}_${SNAP_NAME}_${DATE_EPOCH}"
+btrfs subvolume snapshot -r "${BOOT_MNT}/${BOOT_SUBVOL}" "${BOOT_MNT}/${SNAP_SUBVOL}/${PREFIX}_${DATE_NOW}_${SNAP_NAME}_${DATE_EPOCH}"
 prune_snapshots "${BOOT_MNT}" "${PREFIX}"
-
-umount "${ROOT_MNT}"
-umount "${BOOT_MNT}"

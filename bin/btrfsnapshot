@@ -180,6 +180,10 @@ done
 
 # snapshot root
 PREFIX="${ROOT_SUBVOL}_btrfsnapshot"
+[[ -z "$(find "${ROOT_MNT}/${SNAP_SUBVOL}" -maxdepth 1 -type d -name "${PREFIX}_*_${DATE_EPOCH}")" ]] || {
+  echo "btrfsnapshot: snapshot with timestamp ${DATE_EPOCH} already exists. skipping snapshot creation." >&2
+  exit 0
+}
 btrfs subvolume snapshot -r "${ROOT_MNT}/${ROOT_SUBVOL}" "${ROOT_MNT}/${SNAP_SUBVOL}/${PREFIX}_${DATE_NOW}_${SNAP_NAME}_${DATE_EPOCH}"
 prune_snapshots "${ROOT_MNT}" "${PREFIX}"
 

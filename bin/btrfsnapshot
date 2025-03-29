@@ -11,10 +11,13 @@ CONF_FILE="/etc/btrfsnapshot.conf"
 [[ -f "$CONF_FILE" ]] || {
   cat >"$CONF_FILE" <<'EOF'
 # retention policy
-MAX_RECENT_SNAPS=30  # maximum recent snapshots to keep
-DAYS_KEEP_DAILY=7    # period (in days) for the "daily" bucket
-DAYS_KEEP_WEEKLY=30  # period (in days) for the "weekly" bucket
-DAYS_KEEP_MONTHLY=90 # period (in days) for the "monthly" bucket
+MAX_RECENT_SNAPS=15 # maximum number of recent snapshots to keep
+MAX_SNAPS_DAILY=3   # maximum number of snapshots to keep per day
+MAX_SNAPS_WEEKLY=2  # maximum number of snapshots to keep per week
+
+RECENT_RETENTION=7  # retention period (in days) for recent snapshots
+DAILY_RETENTION=14  # retention period (in days) for daily snapshots
+WEEKLY_RETENTION=60 # retention period (in days) for weekly snapshots
 
 # configuration (uncomment and set the appropriate values)
 # ROOT_UUID=<root mount point UUID>
@@ -34,7 +37,7 @@ source "$CONF_FILE"
 
 required_vars=(
   ROOT_UUID BOOT_UUID ROOT_SUBVOL BOOT_SUBVOL SNAP_SUBVOL EFI_SOURCE EFI_BACKUP_DIR
-  MAX_RECENT_SNAPS DAYS_KEEP_DAILY DAYS_KEEP_WEEKLY DAYS_KEEP_MONTHLY
+  MAX_RECENT_SNAPS MAX_SNAPS_DAILY MAX_SNAPS_WEEKLY RECENT_RETENTION DAILY_RETENTION WEEKLY_RETENTION
 )
 
 for var in "${required_vars[@]}"; do
@@ -103,33 +106,39 @@ prune_snapshots() {
   mapfile -t snaps < <(find "${base_dir}/${SNAP_SUBVOL}" -maxdepth 1 -type d -name "${prefix}_*" -printf '%f\n' | sort -r)
 
   local snap_epoch age_days day_key week_key
-  local recent_snaps_count=0
+  local recent_count daily_count weekly_count
   declare -A keep daily_keep weekly_keep
+  recent_count=0
 
   for snap in "${snaps[@]}"; do
     snap_epoch="${snap##*_}"
     age_days=$(((now - snap_epoch) / 86400))
 
-    if ((age_days < DAYS_KEEP_DAILY)); then
-      if ((recent_snaps_count < MAX_RECENT_SNAPS)); then
+    # keep the most recent snapshots (global policy)
+    if ((age_days < RECENT_RETENTION)); then
+      if ((recent_count < MAX_RECENT_SNAPS)); then
         keep[$snap]=1
-        recent_snaps_count=$((recent_snaps_count + 1))
+        recent_count=$((recent_count + 1))
       fi
     fi
 
-    if ((age_days < DAYS_KEEP_WEEKLY)); then
+    # daily retention: allow up to MAX_SNAPS_DAILY per day (retention period in days)
+    if ((age_days < DAILY_RETENTION)); then
       day_key=$(date -d "@${snap_epoch}" +%Y%m%d)
-      if [[ -z "${daily_keep[$day_key]:-}" ]]; then
+      daily_count=${daily_keep[$day_key]:-0}
+      if ((daily_count < MAX_SNAPS_DAILY)); then
         keep[$snap]=1
-        daily_keep[$day_key]=1
+        daily_keep[$day_key]=$((daily_count + 1))
       fi
     fi
 
-    if ((age_days < DAYS_KEEP_MONTHLY)); then
+    # weekly retention: allow up to MAX_SNAPS_WEEKLY per week (retention period in days)
+    if ((age_days < WEEKLY_RETENTION)); then
       week_key=$(date -d "@${snap_epoch}" +%G%V)
-      if [[ -z "${weekly_keep[$week_key]:-}" ]]; then
+      weekly_count=${weekly_keep[$week_key]:-0}
+      if ((weekly_count < MAX_SNAPS_WEEKLY)); then
         keep[$snap]=1
-        weekly_keep[$week_key]=1
+        weekly_keep[$week_key]=$((weekly_count + 1))
       fi
     fi
   done

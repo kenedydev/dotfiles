@@ -18,7 +18,9 @@ return {
 		-- stylua: ignore end
 	},
 	config = function()
-		require("lspconfig").pyright.setup({})
-		require("lspconfig").bashls.setup({})
+		local lspconfig = require("lspconfig")
+		lspconfig.pyright.setup({})
+		lspconfig.bashls.setup({})
+		lspconfig.ruby_lsp.setup({})
 	end,
 }

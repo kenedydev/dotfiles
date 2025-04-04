@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# FILES0_BLOCK=<path to the LUKS block device>
+# FILES0_MAPPER=<name of the device mapper used for the LUKS block>
+# FILES0_KEY=<path to the key file used to unlock the LUKS block>
+# FILES0_MOUNTPOINT=<mount point path where the LUKS block will be mounted>
+# FILES1_BLOCK=<path to the LUKS block device>
+# FILES1_MAPPER=<name of the device mapper used for the LUKS block>
+# FILES1_KEY=<path to the key file used to unlock the LUKS block>
+# FILES1_MOUNTPOINT=<mount point path where the LUKS block will be mounted>
+
+required_vars=(
+  FILES0_BLOCK FILES0_MAPPER FILES0_KEY FILES0_MOUNTPOINT
+  FILES1_BLOCK FILES1_MAPPER FILES1_KEY FILES1_MOUNTPOINT
+)
+
+for var in "${required_vars[@]}"; do
+  [[ -n "${!var:-}" ]] || {
+    echo "cryptfiles: required variable '$var' is not set. please configure it before running the script." >&2
+    exit 1
+  }
+done
+
+openfiles() {
+  local target="${1:-0}"
+  local ret=0
+
+  if [[ "$target" != "0" && "$target" != "1" && "$target" != "all" ]]; then
+    echo "openfiles: invalid target"
+    return 1
+  fi
+
+  open_and_mount() {
+    local files_block="$1"
+    local files_mapper="$2"
+    local mountpoint="$3"
+    local files_key="$4"
+
+    if mountpoint -q "$mountpoint"; then
+      if [[ "$(sudo findmnt -no SOURCE "$mountpoint")" != /dev/mapper/"$files_mapper"* ]]; then
+        echo "openfiles: $mountpoint is busy" >&2
+        return 1
+      fi
+    else
+      if [[ ! -e /dev/mapper/"$files_mapper" ]]; then
+        sudo cryptsetup --allow-discards --perf-no_read_workqueue --perf-no_write_workqueue \
+          open "$files_block" "$files_mapper" --key-file "$files_key"
+      fi
+      mkdir -p "$mountpoint"
+      sudo mount /dev/mapper/"$files_mapper" "$mountpoint"
+    fi
+    return 0
+  }
+
+  if [[ "$target" == "0" || "$target" == "all" ]]; then
+    open_and_mount "$FILES0_BLOCK" "$FILES0_MAPPER" "$FILES0_MOUNTPOINT" "$FILES0_KEY" || ret=1
+  fi
+
+  if [[ "$target" == "1" || "$target" == "all" ]]; then
+    open_and_mount "$FILES1_BLOCK" "$FILES1_MAPPER" "$FILES1_MOUNTPOINT" "$FILES1_KEY" || ret=1
+  fi
+
+  return "$ret"
+}
+
+closefiles() {
+  local target="${1:-all}"
+  local ret=0
+
+  if [[ "$target" != "0" && "$target" != "1" && "$target" != "all" ]]; then
+    echo "closefiles: invalid target"
+    return 1
+  fi
+
+  umount_and_close() {
+    local mountpoint="$1"
+    local files_mapper="$2"
+    local ret=0
+
+    if mountpoint -q "$mountpoint"; then
+      if [[ "$(sudo findmnt -no SOURCE "$mountpoint")" != /dev/mapper/"$files_mapper"* ]]; then
+        echo "closefiles: $mountpoint is mounted on an unexpected device"
+        ret=1
+      else
+        sudo umount "$mountpoint"
+      fi
+    fi
+    if [[ -e /dev/mapper/"$files_mapper" ]]; then
+      sudo cryptsetup close "$files_mapper"
+    fi
+    return "$ret"
+  }
+
+  if [[ "$target" == "0" || "$target" == "all" ]]; then
+    umount_and_close "$FILES0_MOUNTPOINT" "$FILES0_MAPPER" || ret=1
+  fi
+
+  if [[ "$target" == "1" || "$target" == "all" ]]; then
+    umount_and_close "$FILES1_MOUNTPOINT" "$FILES1_MAPPER" || ret=1
+  fi
+
+  return "$ret"
+}
+
+syncfiles() {
+  # Open both volumes if needed
+  openfiles "all" || {
+    echo "syncfiles: failed to open files" >&2
+    return 1
+  }
+
+  # Use rsync to synchronize the content of FILES0_MOUNTPOINT to FILES1_MOUNTPOINT,
+  # deleting files in files1 that do not exist in files0.
+  rsync -av --delete "${FILES0_MOUNTPOINT}/" "${FILES1_MOUNTPOINT}/"
+
+  return 0
+}
+
+print_help() {
+  cat <<EOF
+usage: cryptfiles command [target]
+
+Commands:
+  open [target]    Open and mount the LUKS volume. 'target' can be 0, 1, or "all" (default: 0).
+  close [target]   Unmount and close the LUKS volume. 'target' can be 0, 1, or "all" (default: all).
+  sync             Synchronize files from FILES0 to FILES1 using rsync.
+EOF
+}
+
+if [[ $# -lt 1 ]]; then
+  print_help
+  exit 1
+fi
+
+case "$1" in
+open)
+  shift
+  openfiles "$@"
+  ;;
+close)
+  shift
+  closefiles "$@"
+  ;;
+sync)
+  syncfiles
+  ;;
+*)
+  print_help
+  exit 1
+  ;;
+esac

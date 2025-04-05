@@ -27,7 +27,7 @@ openfiles() {
   local ret=0
 
   if [[ "$target" != "0" && "$target" != "1" && "$target" != "all" ]]; then
-    echo "openfiles: invalid target"
+    echo "cryptfiles(open): invalid target"
     return 1
   fi
 
@@ -38,8 +38,8 @@ openfiles() {
     local files_key="$4"
 
     if mountpoint -q "$mountpoint"; then
-      if [[ "$(sudo findmnt -no SOURCE "$mountpoint")" != /dev/mapper/"$files_mapper"* ]]; then
-        echo "openfiles: $mountpoint is busy" >&2
+      if [[ "$(findmnt -no SOURCE "$mountpoint")" != /dev/mapper/"$files_mapper"* ]]; then
+        echo "cryptfiles(open): $mountpoint is busy" >&2
         return 1
       fi
     else
@@ -69,7 +69,7 @@ closefiles() {
   local ret=0
 
   if [[ "$target" != "0" && "$target" != "1" && "$target" != "all" ]]; then
-    echo "closefiles: invalid target"
+    echo "cryptfiles(close): invalid target"
     return 1
   fi
 
@@ -80,7 +80,7 @@ closefiles() {
 
     if mountpoint -q "$mountpoint"; then
       if [[ "$(sudo findmnt -no SOURCE "$mountpoint")" != /dev/mapper/"$files_mapper"* ]]; then
-        echo "closefiles: $mountpoint is mounted on an unexpected device"
+        echo "cryptfiles(close): $mountpoint is mounted on an unexpected device"
         ret=1
       else
         sudo umount "$mountpoint"
@@ -110,9 +110,15 @@ syncfiles() {
     return 1
   }
 
+  local dry_run_flag="--dry-run"
+  if [[ "${1:-}" == "commit" ]]; then
+    dry_run_flag=""
+  else
+    echo "cryptfiles(sync): running in dry-run mode. use 'commit' as argument to apply changes."
+  fi
   # Use rsync to synchronize the content of FILES0_MOUNTPOINT to FILES1_MOUNTPOINT,
   # deleting files in files1 that do not exist in files0.
-  rsync -av --delete "${FILES0_MOUNTPOINT}/" "${FILES1_MOUNTPOINT}/"
+  rsync -avh ${dry_run_flag} --delete "${FILES0_MOUNTPOINT}/" "${FILES1_MOUNTPOINT}/"
 
   return 0
 }
@@ -124,7 +130,8 @@ usage: cryptfiles command [target]
 Commands:
   open [target]    Open and mount the LUKS volume. 'target' can be 0, 1, or "all" (default: 0).
   close [target]   Unmount and close the LUKS volume. 'target' can be 0, 1, or "all" (default: all).
-  sync             Synchronize files from FILES0 to FILES1 using rsync.
+  sync [commit]    Synchronize files from FILES0 to FILES1 using rsync.
+                   By default, runs in dry-run mode (simulation). Use 'commit' to apply changes.
 EOF
 }
 
@@ -143,7 +150,8 @@ close)
   closefiles "$@"
   ;;
 sync)
-  syncfiles
+  shift
+  syncfiles "$@"
   ;;
 *)
   print_help

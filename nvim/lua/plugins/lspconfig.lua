@@ -22,5 +22,6 @@ return {
 		lspconfig.pyright.setup({})
 		lspconfig.bashls.setup({})
 		lspconfig.ruby_lsp.setup({})
+		lspconfig.clangd.setup({})
 	end,
 }

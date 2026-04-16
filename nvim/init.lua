@@ -47,17 +47,32 @@ vim.keymap.set("n", "<Esc>", ":noh<CR>", { noremap = true, silent = true, desc =
 
 -- toggle relative numbers
 vim.keymap.set("n", "<Leader>ur", function()
-  vim.opt.relativenumber = not vim.opt.relativenumber:get()
-end, { noremap = true, silent = true, desc = "Toggle relative numbers" })
+  vim.wo.relativenumber = not vim.wo.relativenumber
+end, { silent = true, desc = "Toggle relative numbers" })
 
 -- toggle line wrapping
-vim.keymap.set("n", "<Leader>uw", function()
-  vim.opt.wrap = not vim.opt.wrap:get()
-end, { noremap = true, silent = true, desc = "Toggle line wrap" })
+vim.keymap.set("n", "<leader>uw", function()
+  vim.wo.wrap = not vim.wo.wrap
+end, { silent = true, desc = "Toggle line wrap" })
 
 -- copy to system clipboard
 vim.keymap.set("n", "<Leader>y", '"+yy', { noremap = true, silent = true, desc = "Copy line to system clipboard" })
 vim.keymap.set("v", "<Leader>y", '"+y', { noremap = true, silent = true, desc = "Copy selection to system clipboard" })
+
+-- copy diagnostic under cursor to system clipboard
+vim.keymap.set("n", "<leader>ly", function()
+  local diagnostics = vim.diagnostic.get(0, { lnum = vim.fn.line(".") - 1 })
+
+  if vim.tbl_isempty(diagnostics) then return end
+
+  local d = diagnostics[1]
+  local source = d.source and ("[" .. d.source .. "] ") or ""
+  local code = d.code and (" (Code: " .. d.code .. ")") or ""
+  local full_message = source .. d.message .. code
+
+  vim.fn.setreg("+", full_message)
+  vim.notify("Copied detailed diagnostic")
+end, { desc = "Copy diagnostic to clipboard" })
 
 -- window management
 vim.keymap.set("n", "<leader>wq", "<cmd>q<cr>", { desc = "Close Window" })
@@ -72,12 +87,13 @@ vim.keymap.set("n", "<C-Down>", "<cmd>resize -2<cr>", { desc = "Decrease Window 
 vim.keymap.set("n", "<C-Left>", "<cmd>vertical resize -2<cr>", { desc = "Decrease Window Width" })
 vim.keymap.set("n", "<C-Right>", "<cmd>vertical resize +2<cr>", { desc = "Increase Window Width" })
 
--- quickfix
+-- quickfix list management
 vim.keymap.set("n", "<leader>qc", "<cmd>cclose<cr>", { desc = "Close Quickfix" })
 vim.keymap.set("n", "<leader>qo", "<cmd>copen<cr>", { desc = "Open Quickfix" })
 vim.keymap.set("n", "]q", "<cmd>cnext<cr>", { desc = "Next Quickfix Item" })
 vim.keymap.set("n", "[q", "<cmd>cprev<cr>", { desc = "Previous Quickfix Item" })
 
+-- buffer management
 vim.keymap.set("n", "<leader>bb", "<C-^>", { desc = "Switch to Other Buffer" })
 vim.keymap.set("n", "<S-h>", "<cmd>bprevious<cr>", { desc = "Prev Buffer" })
 vim.keymap.set("n", "<S-l>", "<cmd>bnext<cr>", { desc = "Next Buffer" })
@@ -103,6 +119,14 @@ require("lazy").setup({
         })
         vim.cmd([[colorscheme tokyodark]])
       end,
+    },
+
+    -- blink
+    {
+      'saghen/blink.cmp',
+      version = '*',
+      dependencies = 'rafamadriz/friendly-snippets',
+      opts = {},
     },
 
     -- conform
@@ -152,6 +176,10 @@ require("lazy").setup({
           },
         })
       end,
+    },
+
+    {
+      'AndreM222/copilot-lualine'
     },
 
     -- fzf
@@ -258,28 +286,46 @@ require("lazy").setup({
           vim.keymap.set("n", "<leader>ghr", gs.reset_hunk, { desc = "Reset Hunk", buffer = bufnr })
           vim.keymap.set("n", "<leader>ghp", gs.preview_hunk, { desc = "Preview Hunk (Pop-up)", buffer = bufnr })
           vim.keymap.set("n", "<leader>ghd", gs.preview_hunk_inline, { desc = "Diff Hunk (Inline)", buffer = bufnr })
-          vim.keymap.set("n", "<leader>ghs", gs.stage_hunk, { desc = "Stage Hunk", buffer = bufnr })
-          vim.keymap.set("n", "<leader>ghu", gs.undo_stage_hunk, { desc = "Undo Stage Hunk", buffer = bufnr })
-          vim.keymap.set("n", "]h", gs.next_hunk, { desc = "Next Change", buffer = bufnr })
-          vim.keymap.set("n", "[h", gs.prev_hunk, { desc = "Prev Change", buffer = bufnr })
+          vim.keymap.set("n", "<leader>ghs", gs.stage_hunk, { desc = "Toggle Stage Hunk", buffer = bufnr })
+          vim.keymap.set("n", "]h", function() gs.nav_hunk("next") end, { desc = "Next Change", buffer = bufnr })
+          vim.keymap.set("n", "[h", function() gs.nav_hunk("prev") end, { desc = "Prev Change", buffer = bufnr })
         end,
       },
     },
 
-    -- lsp
+    -- lazydev
+    {
+      "folke/lazydev.nvim",
+      ft = "lua",
+      opts = {
+        library = {
+          { path = "${3rd}/luv/library", words = { "vim%.uv" } },
+          { path = "snacks.nvim", words = { "Snacks" } },
+        },
+      },
+    },
+
+-- lsp
     {
       "neovim/nvim-lspconfig",
+      dependencies = { "saghen/blink.cmp" },
       config = function()
+        local capabilities = require('blink.cmp').get_lsp_capabilities()
         vim.diagnostic.config({ update_in_insert = false })
+        local servers = {
+          clangd = {
+            cmd = { "clangd", "--background-index", "--clang-tidy" },
+          },
+          lua_ls = {},
+          pyright = {},
+          ruff = {},
+        }
 
-        vim.lsp.config('clangd', {
-          cmd = { "clangd", "--background-index", "--clang-tidy" }
-        })
-
-        vim.lsp.enable('clangd')
-        vim.lsp.enable('lua_ls')
-        vim.lsp.enable('pyright')
-        vim.lsp.enable('ruff')
+        for server, config in pairs(servers) do
+          config.capabilities = capabilities
+          vim.lsp.config(server, config)
+          vim.lsp.enable(server)
+        end
 
         vim.api.nvim_create_autocmd("LspAttach", {
           group = vim.api.nvim_create_augroup("LspKeybindsAndFeatures", { clear = true }),
@@ -306,9 +352,8 @@ require("lazy").setup({
       dependencies = { "nvim-tree/nvim-web-devicons" },
       opts = {
         sections = {
-          lualine_c = {
-            { "filename", path = 1 }, -- or path = 3 for absolute path
-          },
+          lualine_c = { { "filename", path = 1 }, },
+          lualine_x = { 'copilot' ,'encoding', 'fileformat', 'filetype' },
         },
       },
     },

@@ -24,7 +24,6 @@ vim.opt.rtp:prepend(lazypath)
 -- General settings
 vim.opt.number = true
 vim.opt.relativenumber = true
-vim.opt.clipboard = "unnamedplus"
 vim.opt.mouse = "a"
 vim.opt.tabstop = 2
 vim.opt.shiftwidth = 2
@@ -56,6 +55,11 @@ vim.keymap.set("n", "<Leader>uw", function()
   vim.opt.wrap = not vim.opt.wrap:get()
 end, { noremap = true, silent = true, desc = "Toggle line wrap" })
 
+-- copy to system clipboard
+vim.keymap.set("n", "<Leader>y", '"+yy', { noremap = true, silent = true, desc = "Copy line to system clipboard" })
+vim.keymap.set("v", "<Leader>y", '"+y', { noremap = true, silent = true, desc = "Copy selection to system clipboard" })
+
+-- window management
 vim.keymap.set("n", "<leader>wq", "<cmd>q<cr>", { desc = "Close Window" })
 vim.keymap.set("n", "<leader>wsh", "<cmd>split<cr>", { desc = "Split Window Horizontal" })
 vim.keymap.set("n", "<leader>wsv", "<cmd>vsplit<cr>", { desc = "Split Window Vertical" })
@@ -68,6 +72,7 @@ vim.keymap.set("n", "<C-Down>", "<cmd>resize -2<cr>", { desc = "Decrease Window 
 vim.keymap.set("n", "<C-Left>", "<cmd>vertical resize -2<cr>", { desc = "Decrease Window Width" })
 vim.keymap.set("n", "<C-Right>", "<cmd>vertical resize +2<cr>", { desc = "Increase Window Width" })
 
+-- quickfix
 vim.keymap.set("n", "<leader>qc", "<cmd>cclose<cr>", { desc = "Close Quickfix" })
 vim.keymap.set("n", "<leader>qo", "<cmd>copen<cr>", { desc = "Open Quickfix" })
 vim.keymap.set("n", "]q", "<cmd>cnext<cr>", { desc = "Next Quickfix Item" })
@@ -97,6 +102,55 @@ require("lazy").setup({
           },
         })
         vim.cmd([[colorscheme tokyodark]])
+      end,
+    },
+
+    -- conform
+    {
+      "stevearc/conform.nvim",
+      event = { "BufWritePre" },
+      cmd = { "ConformInfo" },
+      opts = {
+        formatters_by_ft = {
+          lua = { "stylua" },
+          html = { "prettier" },
+          css = { "prettier" },
+          javascript = { "prettier" },
+          python = { "ruff_format" },
+        },
+        format_on_save = {
+          timeout_ms = 1000,
+          lsp_format = "fallback",
+        },
+      },
+    },
+
+    -- copilot
+    {
+      "zbirenbaum/copilot.lua",
+      cmd = "Copilot",
+      event = "InsertEnter",
+      config = function()
+        require("copilot").setup({
+          suggestion = {
+            auto_trigger = true,
+            debounce = 100,
+            keymap = {
+              accept = "<M-;>",
+              accept_word = "<M-l>",
+              accept_line = "<M-j>",
+              toggle_auto_trigger = "<M-a>",
+            },
+          },
+          filetypes = {
+            yaml = false,
+            markdown = true,
+            help = false,
+            gitcommit = false,
+            gitrebase = false,
+            ["."] = false,
+          },
+        })
       end,
     },
 
@@ -189,19 +243,18 @@ require("lazy").setup({
         { "<leader>hm", "<cmd>FzfLua manpages<cr>", desc = "Man Pages (Arch/C)" },
         { "<leader>hk", "<cmd>FzfLua keymaps<cr>", desc = "Key Maps" },
         { "<leader>ht", "<cmd>FzfLua colorschemes<cr>", desc = "Test Themes" },
-        
+
         { "<C-x><C-l>", function() require("fzf-lua").complete_line() end, mode = "i", desc = "Fuzzy Complete Line" },
         { "<C-x><C-f>", function() require("fzf-lua").complete_path() end, mode = "i", desc = "Fuzzy Complete Path" },
       },
     },
-    
+
     -- gitsigns
     {
       "lewis6991/gitsigns.nvim",
       opts = {
         on_attach = function(bufnr)
           local gs = require("gitsigns")
-
           vim.keymap.set("n", "<leader>ghr", gs.reset_hunk, { desc = "Reset Hunk", buffer = bufnr })
           vim.keymap.set("n", "<leader>ghp", gs.preview_hunk, { desc = "Preview Hunk (Pop-up)", buffer = bufnr })
           vim.keymap.set("n", "<leader>ghd", gs.preview_hunk_inline, { desc = "Diff Hunk (Inline)", buffer = bufnr })
@@ -211,6 +264,39 @@ require("lazy").setup({
           vim.keymap.set("n", "[h", gs.prev_hunk, { desc = "Prev Change", buffer = bufnr })
         end,
       },
+    },
+
+    -- lsp
+    {
+      "neovim/nvim-lspconfig",
+      config = function()
+        vim.diagnostic.config({ update_in_insert = false })
+
+        vim.lsp.config('clangd', {
+          cmd = { "clangd", "--background-index", "--clang-tidy" }
+        })
+
+        vim.lsp.enable('clangd')
+        vim.lsp.enable('lua_ls')
+        vim.lsp.enable('pyright')
+        vim.lsp.enable('ruff')
+
+        vim.api.nvim_create_autocmd("LspAttach", {
+          group = vim.api.nvim_create_augroup("LspKeybindsAndFeatures", { clear = true }),
+          callback = function(ev)
+            local client = vim.lsp.get_client_by_id(ev.data.client_id)
+            local opts = { buffer = ev.buf, silent = true }
+
+            vim.keymap.set("n", "K", vim.lsp.buf.hover, opts)
+            vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, vim.tbl_extend("force", opts, { desc = "Rename Symbol" }))
+            vim.keymap.set("i", "<C-s>", vim.lsp.buf.signature_help, vim.tbl_extend("force", opts, { desc = "Signature Help" }))
+
+            if client and client.server_capabilities.inlayHintProvider then
+              vim.lsp.inlay_hint.enable(true, { bufnr = ev.buf })
+            end
+          end,
+        })
+      end,
     },
 
     -- lualine

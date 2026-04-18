@@ -36,6 +36,7 @@ vim.opt.cursorline = true
 vim.opt.scrolloff = 99
 vim.opt.wrap = false
 vim.opt.fixendofline = true
+vim.opt.winborder = "rounded"
 
 -- Key mappings
 
@@ -43,7 +44,7 @@ vim.opt.fixendofline = true
 vim.keymap.set({"n", "v" }, "<Leader>a", "<Esc>ggVG", { noremap = true, silent = true, desc = "Select all text" })
 
 -- clear search
-vim.keymap.set("n", "<Esc>", ":noh<CR>", { noremap = true, silent = true, desc = "Clear search highlights" })
+vim.keymap.set("n", "<Esc>", "<cmd>noh<cr>", { desc = "Clear search highlights" })
 
 -- toggle relative numbers
 vim.keymap.set("n", "<Leader>ur", function()
@@ -95,8 +96,6 @@ vim.keymap.set("n", "[q", "<cmd>cprev<cr>", { desc = "Previous Quickfix Item" })
 
 -- buffer management
 vim.keymap.set("n", "<leader>bb", "<C-^>", { desc = "Switch to Other Buffer" })
-vim.keymap.set("n", "<S-h>", "<cmd>bprevious<cr>", { desc = "Prev Buffer" })
-vim.keymap.set("n", "<S-l>", "<cmd>bnext<cr>", { desc = "Next Buffer" })
 
 -- Setup lazy.nvim
 require("lazy").setup({
@@ -136,6 +135,8 @@ require("lazy").setup({
       cmd = { "ConformInfo" },
       opts = {
         formatters_by_ft = {
+          c = { "clang-format" },
+          cpp = { "clang-format" },
           lua = { "stylua" },
           html = { "prettier" },
           css = { "prettier" },
@@ -398,6 +399,20 @@ require("lazy").setup({
       },
       opts = {
         preset = "helix",
+        spec = {
+          { "<leader>b", group = "Buffer" },
+          { "<leader>d", group = "Debug/DAP" },
+          { "<leader>f", group = "Find/Files" },
+          { "<leader>g", group = "Git" },
+          { "<leader>gh", group = "Hunks" },
+          { "<leader>h", group = "Help/Misc" },
+          { "<leader>l", group = "LSP/Diagnostics" },
+          { "<leader>q", group = "Quickfix" },
+          { "<leader>s", group = "Search/Grep" },
+          { "<leader>u", group = "UI/Toggles" },
+          { "<leader>w", group = "Window" },
+          { "<leader>ws", group = "Split" },
+        },
       },
     },
   },

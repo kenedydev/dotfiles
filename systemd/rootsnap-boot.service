@@ -1,0 +1,12 @@
+[Unit]
+Description=Root Snapshot on Boot
+After=local-fs.target
+ConditionPathExists=/usr/local/bin/rootsnap
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rootsnap -n boot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

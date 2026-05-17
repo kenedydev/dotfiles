@@ -1,0 +1,12 @@
+[Trigger]
+Operation = Upgrade
+Operation = Install
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Creating root snapshot before transaction...
+When = PreTransaction
+Exec = /usr/local/bin/rootsnap -n pacman
+AbortOnFail

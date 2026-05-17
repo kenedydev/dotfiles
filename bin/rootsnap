@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Configuration
+SNAP_DIR="/.snapshots"
+EFI_DIR="/efi"
+EFI_BACKUP_DIR="/efi_backup"
+PREFIX="rootsnap"
+DEBOUNCE_MINS=1
+
+# Retention Policy
+KEEP_LATEST=5   # Always keep the last 5 snapshots
+KEEP_DAILY=7    # Keep 1 per day for the last 7 days
+KEEP_WEEKLY=7   # Keep 1 per week for the last 7 weeks
+
+# Dependency check
+for cmd in rsync btrfs; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: $cmd is not installed." >&2
+    exit 1
+  fi
+done
+
+# Root check
+if [[ $EUID -ne 0 ]]; then
+  echo "Error: must be run as root" >&2
+  exit 1
+fi
+
+print_help() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
+
+Creates a read-only Btrfs snapshot of the root subvolume after backing up EFI.
+
+Options:
+  -n, --name NAME    Optional name suffix for the snapshot (e.g., 'pacman')
+  -h, --help         Show this help message
+
+The snapshot will be named: ${PREFIX}_YYYYMMDD_HHMMSS_NAME_EPOCH
+EOF
+}
+
+SNAP_NAME="snapshot"
+
+# Argument parsing
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--name)
+      SNAP_NAME="$2"
+      shift 2
+      ;;
+    -h|--help)
+      print_help
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      print_help
+      exit 1
+      ;;
+  esac
+done
+
+# Validate snapshot name
+if [[ ! "$SNAP_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: Invalid snapshot name." >&2
+  exit 1
+fi
+
+# Check mounts
+if ! mountpoint -q "$EFI_DIR"; then
+  echo "Error: $EFI_DIR is not mounted" >&2
+  exit 1
+fi
+
+if ! mountpoint -q "$SNAP_DIR"; then
+  echo "Error: $SNAP_DIR is not mounted" >&2
+  exit 1
+fi
+
+NOW_EPOCH=$(date +%s)
+
+# Debounce: avoid snapshots too close to each other
+LAST_SNAP=$(ls -1 "$SNAP_DIR" | grep "^${PREFIX}_.*_[0-9]\+$" | sort -V | tail -n 1 || true)
+if [[ -n "$LAST_SNAP" ]]; then
+  LAST_EPOCH="${LAST_SNAP##*_}"
+  if [[ "$LAST_EPOCH" =~ ^[0-9]+$ ]]; then
+    DIFF_MINS=$(( (NOW_EPOCH - LAST_EPOCH) / 60 ))
+    if [[ $DIFF_MINS -lt $DEBOUNCE_MINS ]]; then
+      exit 0
+    fi
+  fi
+fi
+
+# Backup EFI
+mkdir -p "$EFI_BACKUP_DIR"
+rsync -a --delete "$EFI_DIR/" "$EFI_BACKUP_DIR/"
+
+# Create Snapshot
+DATE_STR=$(date +%Y%m%d_%H%M%S)
+FULL_NAME="${PREFIX}_${DATE_STR}_${SNAP_NAME}_${NOW_EPOCH}"
+btrfs subvolume snapshot -r / "$SNAP_DIR/$FULL_NAME"
+
+# Smart Pruning (Latest/Daily/Weekly)
+# Filter specifically for our prefix and the epoch pattern
+mapfile -t ALL_SNAPS < <(ls -1 "$SNAP_DIR" | grep "^${PREFIX}_.*_[0-9]\+$" | sort -t_ -k5 -rn)
+
+declare -A DAYS_KEPT
+declare -A WEEKS_KEPT
+COUNT=0
+
+for SNAP in "${ALL_SNAPS[@]}"; do
+  # Extract epoch from suffix
+  S_EPOCH="${SNAP##*_}"
+  
+  # Validate epoch format
+  [[ ! "$S_EPOCH" =~ ^[0-9]+$ ]] && continue
+
+  COUNT=$((COUNT + 1))
+  DAY=$(date -d "@$S_EPOCH" +%Y%m%d)
+  WEEK=$(date -d "@$S_EPOCH" +%G-%V)
+  AGE_DAYS=$(( (NOW_EPOCH - S_EPOCH) / 86400 ))
+
+  # RULE 1: Keep the X most recent snapshots
+  if [[ $COUNT -le $KEEP_LATEST ]]; then
+    DAYS_KEPT["$DAY"]=1
+    WEEKS_KEPT["$WEEK"]=1
+    continue
+  fi
+
+  # RULE 2: Keep 1 per day for the last N days
+  if [[ $AGE_DAYS -le $KEEP_DAILY ]]; then
+    if [[ -z "${DAYS_KEPT["$DAY"]:-}" ]]; then
+      DAYS_KEPT["$DAY"]=1
+      WEEKS_KEPT["$WEEK"]=1
+      continue
+    fi
+  fi
+
+  # RULE 3: Keep 1 per week for the last M weeks
+  if [[ $(( AGE_DAYS / 7 )) -le $KEEP_WEEKLY ]]; then
+    if [[ -z "${WEEKS_KEPT["$WEEK"]:-}" ]]; then
+      WEEKS_KEPT["$WEEK"]=1
+      continue
+    fi
+  fi
+
+  # Delete if no rules match
+  btrfs subvolume delete "$SNAP_DIR/$SNAP"
+done

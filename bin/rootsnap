@@ -9,7 +9,7 @@ PREFIX="rootsnap"
 DEBOUNCE_MINS=1
 
 # Retention Policy
-KEEP_LATEST=7   # Always keep the last 5 snapshots
+KEEP_LATEST=7   # Always keep the last 7 snapshots
 KEEP_DAILY=7    # Keep 1 per day for the last 7 days
 KEEP_WEEKLY=7   # Keep 1 per week for the last 7 weeks
 

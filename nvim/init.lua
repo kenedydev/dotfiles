@@ -60,21 +60,6 @@ end, { silent = true, desc = "Toggle line wrap" })
 vim.keymap.set("n", "<Leader>y", '"+yy', { noremap = true, silent = true, desc = "Copy line to system clipboard" })
 vim.keymap.set("v", "<Leader>y", '"+y', { noremap = true, silent = true, desc = "Copy selection to system clipboard" })
 
--- copy diagnostic under cursor to system clipboard
-vim.keymap.set("n", "<leader>ly", function()
-  local diagnostics = vim.diagnostic.get(0, { lnum = vim.fn.line(".") - 1 })
-
-  if vim.tbl_isempty(diagnostics) then return end
-
-  local d = diagnostics[1]
-  local source = d.source and ("[" .. d.source .. "] ") or ""
-  local code = d.code and (" (Code: " .. d.code .. ")") or ""
-  local full_message = source .. d.message .. code
-
-  vim.fn.setreg("+", full_message)
-  vim.notify("Copied detailed diagnostic")
-end, { desc = "Copy diagnostic to clipboard" })
-
 -- window management
 vim.keymap.set("n", "<leader>wq", "<cmd>q<cr>", { desc = "Close Window" })
 vim.keymap.set("n", "<leader>wsh", "<cmd>split<cr>", { desc = "Split Window Horizontal" })
@@ -118,69 +103,6 @@ require("lazy").setup({
         })
         vim.cmd([[colorscheme tokyodark]])
       end,
-    },
-
-    -- blink
-    {
-      'saghen/blink.cmp',
-      version = '*',
-      dependencies = 'rafamadriz/friendly-snippets',
-      opts = {},
-    },
-
-    -- conform
-    {
-      "stevearc/conform.nvim",
-      event = { "BufWritePre" },
-      cmd = { "ConformInfo" },
-      opts = {
-        formatters_by_ft = {
-          c = { "clang-format" },
-          cpp = { "clang-format" },
-          lua = { "stylua" },
-          html = { "prettier" },
-          css = { "prettier" },
-          javascript = { "prettier" },
-          python = { "ruff_format" },
-        },
-        format_on_save = {
-          timeout_ms = 1000,
-          lsp_format = "fallback",
-        },
-      },
-    },
-
-    -- copilot
-    {
-      "zbirenbaum/copilot.lua",
-      cmd = "Copilot",
-      event = "InsertEnter",
-      config = function()
-        require("copilot").setup({
-          suggestion = {
-            auto_trigger = true,
-            debounce = 100,
-            keymap = {
-              accept = "<M-;>",
-              accept_word = "<M-l>",
-              accept_line = "<M-j>",
-              toggle_auto_trigger = "<M-a>",
-            },
-          },
-          filetypes = {
-            yaml = false,
-            markdown = true,
-            help = false,
-            gitcommit = false,
-            gitrebase = false,
-            ["."] = false,
-          },
-        })
-      end,
-    },
-
-    {
-      'AndreM222/copilot-lualine'
     },
 
     -- fzf
@@ -248,26 +170,12 @@ require("lazy").setup({
         { "<leader>sm", "<cmd>FzfLua marks<cr>", desc = "Marks" },
         { "<leader>sh", "<cmd>FzfLua command_history<cr>", desc = "Search Command History" },
 
-        { "<leader>ld", "<cmd>FzfLua lsp_definitions<cr>", desc = "Go to Definition" },
-        { "<leader>lr", "<cmd>FzfLua lsp_references<cr>", desc = "References" },
-        { "<leader>ls", "<cmd>FzfLua lsp_document_symbols<cr>", desc = "Document Symbols" },
-        { "<leader>lS", "<cmd>FzfLua lsp_workspace_symbols<cr>", desc = "Workspace Symbols" },
-        { "<leader>la", "<cmd>FzfLua lsp_code_actions<cr>", desc = "Code Actions" },
-        { "<leader>lf", "<cmd>FzfLua lsp_finder<cr>", desc = "LSP Finder (All-in-one)" },
-        { "<leader>le", "<cmd>FzfLua diagnostics_document<cr>", desc = "Document Diagnostics" },
-        { "<leader>lW", "<cmd>FzfLua diagnostics_workspace<cr>", desc = "Workspace Diagnostics" },
-
         { "<leader>gs", "<cmd>FzfLua git_status<cr>", desc = "Git Status" },
         { "<leader>gc", "<cmd>FzfLua git_bcommits<cr>", desc = "Git Buffer Commits" },
         { "<leader>gb", "<cmd>FzfLua git_branches<cr>", desc = "Git Branches" },
         { "<leader>gx", "<cmd>FzfLua git_stash<cr>", desc = "Git Stash List" },
         { "<leader>gB", "<cmd>FzfLua git_blame<cr>", desc = "Git Blame" },
         { "<leader>gd", "<cmd>FzfLua git_diff<cr>", desc = "Git Diff" },
-
-        { "<leader>db", "<cmd>FzfLua dap_breakpoints<cr>", desc = "DAP Breakpoints" },
-        { "<leader>dv", "<cmd>FzfLua dap_variables<cr>", desc = "DAP Variables" },
-        { "<leader>df", "<cmd>FzfLua dap_frames<cr>", desc = "DAP Frames (Stack)" },
-        { "<leader>dc", "<cmd>FzfLua dap_commands<cr>", desc = "DAP Commands" },
 
         { "<leader>hm", "<cmd>FzfLua manpages<cr>", desc = "Man Pages (Arch/C)" },
         { "<leader>hk", "<cmd>FzfLua keymaps<cr>", desc = "Key Maps" },
@@ -278,74 +186,6 @@ require("lazy").setup({
       },
     },
 
-    -- gitsigns
-    {
-      "lewis6991/gitsigns.nvim",
-      opts = {
-        on_attach = function(bufnr)
-          local gs = require("gitsigns")
-          vim.keymap.set("n", "<leader>ghr", gs.reset_hunk, { desc = "Reset Hunk", buffer = bufnr })
-          vim.keymap.set("n", "<leader>ghp", gs.preview_hunk, { desc = "Preview Hunk (Pop-up)", buffer = bufnr })
-          vim.keymap.set("n", "<leader>ghd", gs.preview_hunk_inline, { desc = "Diff Hunk (Inline)", buffer = bufnr })
-          vim.keymap.set("n", "<leader>ghs", gs.stage_hunk, { desc = "Toggle Stage Hunk", buffer = bufnr })
-          vim.keymap.set("n", "]h", function() gs.nav_hunk("next") end, { desc = "Next Change", buffer = bufnr })
-          vim.keymap.set("n", "[h", function() gs.nav_hunk("prev") end, { desc = "Prev Change", buffer = bufnr })
-        end,
-      },
-    },
-
-    -- lazydev
-    {
-      "folke/lazydev.nvim",
-      ft = "lua",
-      opts = {
-        library = {
-          { path = "${3rd}/luv/library", words = { "vim%.uv" } },
-          { path = "snacks.nvim", words = { "Snacks" } },
-        },
-      },
-    },
-
--- lsp
-    {
-      "neovim/nvim-lspconfig",
-      dependencies = { "saghen/blink.cmp" },
-      config = function()
-        local capabilities = require('blink.cmp').get_lsp_capabilities()
-        vim.diagnostic.config({ update_in_insert = false })
-        local servers = {
-          clangd = {
-            cmd = { "clangd", "--background-index", "--clang-tidy" },
-          },
-          lua_ls = {},
-          pyright = {},
-          ruff = {},
-        }
-
-        for server, config in pairs(servers) do
-          config.capabilities = capabilities
-          vim.lsp.config(server, config)
-          vim.lsp.enable(server)
-        end
-
-        vim.api.nvim_create_autocmd("LspAttach", {
-          group = vim.api.nvim_create_augroup("LspKeybindsAndFeatures", { clear = true }),
-          callback = function(ev)
-            local client = vim.lsp.get_client_by_id(ev.data.client_id)
-            local opts = { buffer = ev.buf, silent = true }
-
-            vim.keymap.set("n", "K", vim.lsp.buf.hover, opts)
-            vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, vim.tbl_extend("force", opts, { desc = "Rename Symbol" }))
-            vim.keymap.set("i", "<C-s>", vim.lsp.buf.signature_help, vim.tbl_extend("force", opts, { desc = "Signature Help" }))
-
-            if client and client.server_capabilities.inlayHintProvider then
-              vim.lsp.inlay_hint.enable(true, { bufnr = ev.buf })
-            end
-          end,
-        })
-      end,
-    },
-
     -- lualine
     {
       "nvim-lualine/lualine.nvim",
@@ -354,7 +194,6 @@ require("lazy").setup({
       opts = {
         sections = {
           lualine_c = { { "filename", path = 1 }, },
-          lualine_x = { 'copilot' ,'encoding', 'fileformat', 'filetype' },
         },
       },
     },
@@ -385,7 +224,6 @@ require("lazy").setup({
         { "]]", function() Snacks.words.jump(vim.v.count1) end, desc = "Next Reference", mode = { "n", "t" } },
         { "[[", function() Snacks.words.jump(-vim.v.count1) end, desc = "Prev Reference", mode = { "n", "t" } },
         { "<leader>un", function() Snacks.notifier.hide() end, desc = "Dismiss All Notifications" },
-        { "<leader>uh", function() Snacks.toggle.inlay_hints() end, desc = "Toggle Inlay Hints (LSP)" },
         { "<leader>ug", function() Snacks.toggle.indent() end, desc = "Toggle Indent Guides" },
       },
     },
@@ -401,12 +239,9 @@ require("lazy").setup({
         preset = "helix",
         spec = {
           { "<leader>b", group = "Buffer" },
-          { "<leader>d", group = "Debug/DAP" },
           { "<leader>f", group = "Find/Files" },
           { "<leader>g", group = "Git" },
-          { "<leader>gh", group = "Hunks" },
           { "<leader>h", group = "Help/Misc" },
-          { "<leader>l", group = "LSP/Diagnostics" },
           { "<leader>q", group = "Quickfix" },
           { "<leader>s", group = "Search/Grep" },
           { "<leader>u", group = "UI/Toggles" },

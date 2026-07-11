@@ -9,9 +9,22 @@ PREFIX="rootsnap"
 DEBOUNCE_MINS=1
 
 # Retention Policy
-KEEP_LATEST=7   # Always keep the last 7 snapshots
-KEEP_DAILY=7    # Keep 1 per day for the last 7 days
-KEEP_WEEKLY=7   # Keep 1 per week for the last 7 weeks
+KEEP_LATEST=7 # Always keep the last 7 snapshots
+KEEP_DAILY=7 # Keep 1 per day for the last 7 days
+KEEP_WEEKLY=7 # Keep 1 per week for the last 7 weeks
+
+# List existing snapshot names, newest first (sorted by trailing epoch).
+list_snaps_desc() {
+  local path name epoch
+  for path in "$SNAP_DIR/${PREFIX}"_*; do
+    [[ -e "$path" ]] || continue
+    name="${path##*/}"
+    epoch="${name##*_}"
+    if [[ "$epoch" =~ ^[0-9]+$ ]]; then
+      printf '%s\t%s\n' "$epoch" "$name"
+    fi
+  done | sort -rn | cut -f2-
+}
 
 # Dependency check
 for cmd in rsync btrfs; do
@@ -82,7 +95,7 @@ fi
 NOW_EPOCH=$(date +%s)
 
 # Debounce: avoid snapshots too close to each other
-LAST_SNAP=$(ls -1 "$SNAP_DIR" | grep "^${PREFIX}_.*_[0-9]\+$" | sort -V | tail -n 1 || true)
+LAST_SNAP=$(list_snaps_desc | head -n 1 || true)
 if [[ -n "$LAST_SNAP" ]]; then
   LAST_EPOCH="${LAST_SNAP##*_}"
   if [[ "$LAST_EPOCH" =~ ^[0-9]+$ ]]; then
@@ -95,16 +108,22 @@ fi
 
 # Backup EFI
 mkdir -p "$EFI_BACKUP_DIR"
-rsync -a --delete "$EFI_DIR/" "$EFI_BACKUP_DIR/"
+if ! rsync -a --delete "$EFI_DIR/" "$EFI_BACKUP_DIR/"; then
+  echo "Error: failed to back up EFI from $EFI_DIR" >&2
+  exit 1
+fi
 
 # Create Snapshot
 DATE_STR=$(date +%Y%m%d_%H%M%S)
 FULL_NAME="${PREFIX}_${DATE_STR}_${SNAP_NAME}_${NOW_EPOCH}"
-btrfs subvolume snapshot -r / "$SNAP_DIR/$FULL_NAME"
+if ! btrfs subvolume snapshot -r / "$SNAP_DIR/$FULL_NAME"; then
+  echo "Error: failed to create snapshot $FULL_NAME" >&2
+  exit 1
+fi
 
 # Smart Pruning (Latest/Daily/Weekly)
 # Filter specifically for our prefix and the epoch pattern
-mapfile -t ALL_SNAPS < <(ls -1 "$SNAP_DIR" | grep "^${PREFIX}_.*_[0-9]\+$" | sort -t_ -k5 -rn)
+mapfile -t ALL_SNAPS < <(list_snaps_desc)
 
 declare -A DAYS_KEPT
 declare -A WEEKS_KEPT
@@ -113,7 +132,7 @@ COUNT=0
 for SNAP in "${ALL_SNAPS[@]}"; do
   # Extract epoch from suffix
   S_EPOCH="${SNAP##*_}"
-  
+
   # Validate epoch format
   [[ ! "$S_EPOCH" =~ ^[0-9]+$ ]] && continue
 
@@ -147,5 +166,7 @@ for SNAP in "${ALL_SNAPS[@]}"; do
   fi
 
   # Delete if no rules match
-  btrfs subvolume delete "$SNAP_DIR/$SNAP"
+  if ! btrfs subvolume delete "$SNAP_DIR/$SNAP"; then
+    echo "Warning: failed to delete old snapshot $SNAP" >&2
+  fi
 done

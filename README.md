@@ -2,8 +2,8 @@
 
 Personal configuration files, scripts, and system resources for my Arch Linux
 setup. Each top-level directory groups the files for one tool or concern, and
-everything is symlinked into place from this repository, so the repo stays the
-single source of truth and updates are just a `git pull`.
+the repo is the single source of truth. See each section below for how to
+install its files.
 
 Clone it wherever you like; the commands below assume `~/dotfiles`:
 
@@ -21,7 +21,7 @@ automatically on the first launch, so there is nothing to install by hand.
 
 **Requires:** Neovim ≥ 0.11
 
-| File             | Symlinked to                    | Purpose                                      |
+| File             | Installed to                    | Purpose                                      |
 | ---------------- | ------------------------------- | -------------------------------------------- |
 | `init.lua`       | `~/.config/nvim/init.lua`       | Settings, keymaps and plugin specs           |
 | `lazy-lock.json` | `~/.config/nvim/lazy-lock.json` | Pinned plugin versions (reproducible builds) |
@@ -48,3 +48,48 @@ after every `:Lazy update`.
 [lualine]: https://github.com/nvim-lualine/lualine.nvim
 [snacks]: https://github.com/folke/snacks.nvim
 [whichkey]: https://github.com/folke/which-key.nvim
+
+---
+
+## Root snapshots (`rootsnap/`)
+
+`rootsnap` backs up the EFI partition and then takes a read-only Btrfs snapshot
+of the root subvolume. Retention keeps the last 7 snapshots, plus one per day
+for 7 days and one per week for 7 weeks. Only the root subvolume is snapshotted,
+so nested subvolumes (e.g. `/home`) are not included.
+
+**Requires:** a Btrfs root, an ESP mounted at `/efi`, a subvolume mounted at
+`/.snapshots`, and `rsync` + `btrfs-progs`. Must run as root. Snapshots are
+created under `/.snapshots`; the EFI backup is mirrored to `/efi_backup` so it is
+captured inside each snapshot.
+
+### Setup
+
+Install it to a system path, then run it whenever you want a snapshot:
+
+```bash
+sudo install -Dm755 ~/dotfiles/rootsnap/rootsnap /usr/local/bin/rootsnap
+sudo rootsnap -n <name>   # <name> is an optional label, e.g. "manual"
+```
+
+It is copied rather than symlinked because it installs to a root-owned system
+path and may run before a home directory is mounted, where a symlink into `~`
+could dangle. Re-run the install command after editing the script.
+
+### Automatic triggers
+
+These two files trigger a snapshot automatically.
+
+| File               | Installed to                           | Triggers a snapshot             |
+| ------------------ | -------------------------------------- | ------------------------------- |
+| `90_rootsnap.hook` | `/etc/pacman.d/hooks/90_rootsnap.hook` | Before every pacman transaction |
+| `rootsnap.service` | `/etc/systemd/system/rootsnap.service` | Once on each boot               |
+
+```bash
+# Snapshot before every pacman transaction
+sudo install -Dm644 ~/dotfiles/rootsnap/90_rootsnap.hook /etc/pacman.d/hooks/90_rootsnap.hook
+
+# Snapshot once on each boot
+sudo install -Dm644 ~/dotfiles/rootsnap/rootsnap.service /etc/systemd/system/rootsnap.service
+sudo systemctl enable rootsnap.service
+```

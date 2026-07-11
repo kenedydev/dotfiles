@@ -33,7 +33,7 @@ vim.opt.autoindent = true
 vim.opt.smartindent = true
 vim.opt.termguicolors = true
 vim.opt.cursorline = true
-vim.opt.scrolloff = 99
+vim.opt.scrolloff = 4
 vim.opt.wrap = false
 vim.opt.fixendofline = true
 vim.opt.winborder = "rounded"
@@ -41,13 +41,13 @@ vim.opt.winborder = "rounded"
 -- Key mappings
 
 -- select all text
-vim.keymap.set({"n", "v" }, "<Leader>a", "<Esc>ggVG", { noremap = true, silent = true, desc = "Select all text" })
+vim.keymap.set({ "n", "v" }, "<leader>a", "<Esc>ggVG", { noremap = true, silent = true, desc = "Select all text" })
 
 -- clear search
 vim.keymap.set("n", "<Esc>", "<cmd>noh<cr>", { desc = "Clear search highlights" })
 
 -- toggle relative numbers
-vim.keymap.set("n", "<Leader>ur", function()
+vim.keymap.set("n", "<leader>ur", function()
   vim.wo.relativenumber = not vim.wo.relativenumber
 end, { silent = true, desc = "Toggle relative numbers" })
 
@@ -57,8 +57,8 @@ vim.keymap.set("n", "<leader>uw", function()
 end, { silent = true, desc = "Toggle line wrap" })
 
 -- copy to system clipboard
-vim.keymap.set("n", "<Leader>y", '"+yy', { noremap = true, silent = true, desc = "Copy line to system clipboard" })
-vim.keymap.set("v", "<Leader>y", '"+y', { noremap = true, silent = true, desc = "Copy selection to system clipboard" })
+vim.keymap.set("n", "<leader>y", '"+yy', { noremap = true, silent = true, desc = "Copy line to system clipboard" })
+vim.keymap.set("v", "<leader>y", '"+y', { noremap = true, silent = true, desc = "Copy selection to system clipboard" })
 
 -- window management
 vim.keymap.set("n", "<leader>wq", "<cmd>q<cr>", { desc = "Close Window" })
@@ -208,7 +208,7 @@ require("lazy").setup({
         bufdelete = { enabled = true },
         quickfile = { enabled = true },
         indent = { enabled = true },
-        words = { enabled = true },
+        words = { enabled = false },
         notifier = { enabled = true },
         input = { enabled = true },
         dashboard = { enabled = true },
@@ -221,8 +221,6 @@ require("lazy").setup({
         { "<leader>bd", function() Snacks.bufdelete() end, desc = "Delete Buffer" },
         { "<leader>bo", function() Snacks.bufdelete.other() end, desc = "Delete Other Buffers" },
         { "<leader>t", function() Snacks.terminal() end, desc = "Toggle Terminal" },
-        { "]]", function() Snacks.words.jump(vim.v.count1) end, desc = "Next Reference", mode = { "n", "t" } },
-        { "[[", function() Snacks.words.jump(-vim.v.count1) end, desc = "Prev Reference", mode = { "n", "t" } },
         { "<leader>un", function() Snacks.notifier.hide() end, desc = "Dismiss All Notifications" },
         { "<leader>ug", function() Snacks.toggle.indent() end, desc = "Toggle Indent Guides" },
       },

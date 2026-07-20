@@ -1,137 +1,296 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# FILES0_BLOCK=<path to the LUKS block device>
-# FILES0_MAPPER=<name of the device mapper used for the LUKS block>
-# FILES0_KEY=<path to the key file used to unlock the LUKS block>
-# FILES0_MOUNTPOINT=<mount point path where the LUKS block will be mounted>
-# FILES1_BLOCK=<path to the LUKS block device>
-# FILES1_MAPPER=<name of the device mapper used for the LUKS block>
-# FILES1_KEY=<path to the key file used to unlock the LUKS block>
-# FILES1_MOUNTPOINT=<mount point path where the LUKS block will be mounted>
+# Configuration comes entirely from environment variables.
+# Two volumes, named by role: 'main' and 'backup'. For each one:
+#
+#   CRYPTFILES_MAIN_BLOCK       (required) path to the LUKS block device
+#   CRYPTFILES_MAIN_MAPPER      (optional) device-mapper name      [default: cryptfiles_main]
+#   CRYPTFILES_MAIN_MOUNTPOINT  (optional) where to mount it       [default: $HOME/cryptfiles_main]
+#   CRYPTFILES_MAIN_KEY         (optional) key file to unlock LUKS [default: prompt interactively]
+#
+# (same set for CRYPTFILES_BACKUP_*)
+#
+#   CRYPTFILES_KEEP_SNAPSHOTS (optional) how many mirror snapshots to keep [default: 10]
+#
+# Btrfs layout: data lives in the '@files' subvolume, read-only snapshots in
+# '@snapshots'. While a volume is open, '@snapshots' is also mounted at
+# <mountpoint>/<SNAP_MOUNT>.
+#
+# Snapshots are named '<SNAP_PREFIX>_YYYYMMDD_HHMMSS_EPOCH'; pruning only
+# touches names matching that prefix.
 
-required_vars=(
-  FILES0_BLOCK FILES0_MAPPER FILES0_KEY FILES0_MOUNTPOINT
-  FILES1_BLOCK FILES1_MAPPER FILES1_KEY FILES1_MOUNTPOINT
-)
+DATA_SUBVOL="@files"
+SNAP_SUBVOL="@snapshots"
+SNAP_MOUNT=".snapshots"
+SNAP_PREFIX="cryptfiles"
 
-for var in "${required_vars[@]}"; do
-  [[ -n "${!var:-}" ]] || {
-    echo "cryptfiles: required variable '$var' is not set. please configure it before running the script." >&2
-    exit 1
-  }
-done
+# resolve <name> -> sets globals: block mapper mountpoint key
+resolve() {
+  local name="$1"
+  local pfx="CRYPTFILES_${name^^}_"
+  local vb="${pfx}BLOCK" vm="${pfx}MAPPER" vmp="${pfx}MOUNTPOINT" vk="${pfx}KEY"
 
-openfiles() {
-  local target="${1:-0}"
+  block="${!vb:-}"
+  mapper="${!vm:-cryptfiles_${name}}"
+  mountpoint="${!vmp:-$HOME/cryptfiles_${name}}"
+  key="${!vk:-}"
+
+  if [[ -z "$block" ]]; then
+    echo "cryptfiles: required variable '${vb}' is not set." >&2
+    return 1
+  fi
+}
+
+applies() {
+  [[ "$1" == "all" || "$1" == "$2" ]]
+}
+
+# Refuse if MAIN and BACKUP resolve to the same underlying device.
+check_distinct_blocks() {
+  local main_block="${CRYPTFILES_MAIN_BLOCK:-}" backup_block="${CRYPTFILES_BACKUP_BLOCK:-}"
+
+  if [[ -n "$main_block" && -n "$backup_block" ]]; then
+    if [[ "$(readlink -f "$main_block")" == "$(readlink -f "$backup_block")" ]]; then
+      echo "cryptfiles: CRYPTFILES_MAIN_BLOCK and CRYPTFILES_BACKUP_BLOCK resolve to the same device ($(readlink -f "$main_block")); refusing" >&2
+      return 1
+    fi
+  fi
+}
+
+open_and_mount() {
+  local block="$1" mapper="$2" mountpoint="$3" key="$4"
+
+  # Open the LUKS mapper; if it already exists, verify it is the configured block.
+  if [[ -e /dev/mapper/"$mapper" ]]; then
+    local backing
+    backing="$(sudo cryptsetup status "$mapper" 2>/dev/null | awk '/^ *device:/ {print $2}')"
+    if [[ -z "$backing" || "$(readlink -f "$backing")" != "$(readlink -f "$block")" ]]; then
+      echo "cryptfiles: /dev/mapper/$mapper is already open on '${backing:-unknown}', not $block; aborting" >&2
+      return 1
+    fi
+  else
+    local args=(--allow-discards --perf-no_read_workqueue --perf-no_write_workqueue
+      open "$block" "$mapper")
+    if [[ -n "$key" ]]; then
+      args+=(--key-file "$key")
+    fi
+    sudo cryptsetup "${args[@]}" || return 1
+  fi
+
+  # Mount the data subvolume at $mountpoint.
+  if mountpoint -q "$mountpoint"; then
+    if [[ "$(findmnt -no SOURCE "$mountpoint")" != /dev/mapper/"$mapper"* ]]; then
+      echo "cryptfiles: $mountpoint is busy with an unexpected device" >&2
+      return 1
+    fi
+  else
+    mkdir -p "$mountpoint"
+    # Refuse to mount over a non-empty mountpoint.
+    if [[ -n "$(sudo find "$mountpoint" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+      echo "cryptfiles: $mountpoint is not empty; refusing to mount over existing files" >&2
+      return 1
+    fi
+    sudo mount -o subvol="$DATA_SUBVOL" /dev/mapper/"$mapper" "$mountpoint" || return 1
+  fi
+
+  # Mount the snapshots subvolume inside the data mountpoint.
+  local snapmp="$mountpoint/$SNAP_MOUNT"
+  if ! mountpoint -q "$snapmp"; then
+    sudo mkdir -p "$snapmp"
+    sudo mount -o subvol="$SNAP_SUBVOL" /dev/mapper/"$mapper" "$snapmp" || return 1
+  fi
+}
+
+umount_and_close() {
+  local mountpoint="$1" mapper="$2"
+
+  # Unmount the nested snapshots mount first.
+  local snapmp="$mountpoint/$SNAP_MOUNT"
+  if mountpoint -q "$snapmp"; then
+    if ! sudo umount "$snapmp"; then
+      echo "cryptfiles: failed to unmount $snapmp; leaving $mapper open" >&2
+      return 1
+    fi
+  fi
+
+  if mountpoint -q "$mountpoint"; then
+    if [[ "$(findmnt -no SOURCE "$mountpoint")" != /dev/mapper/"$mapper"* ]]; then
+      echo "cryptfiles: $mountpoint is mounted on an unexpected device" >&2
+      return 1
+    fi
+    if ! sudo umount "$mountpoint"; then
+      echo "cryptfiles: failed to unmount $mountpoint; leaving $mapper open" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -e /dev/mapper/"$mapper" ]]; then
+    if ! sudo cryptsetup close "$mapper"; then
+      echo "cryptfiles: failed to close $mapper (still in use?)" >&2
+      return 1
+    fi
+  fi
+}
+
+open_files() {
+  local target="${1:-main}"
   local ret=0
+  local block mapper mountpoint key
 
-  if [[ "$target" != "0" && "$target" != "1" && "$target" != "all" ]]; then
-    echo "cryptfiles(open): invalid target"
+  if [[ "$target" != "main" && "$target" != "backup" && "$target" != "all" ]]; then
+    echo "cryptfiles: invalid target '$target' (use main, backup or all)" >&2
     return 1
   fi
 
-  open_and_mount() {
-    local files_block="$1"
-    local files_mapper="$2"
-    local mountpoint="$3"
-    local files_key="$4"
+  check_distinct_blocks || return 1
 
-    if mountpoint -q "$mountpoint"; then
-      if [[ "$(findmnt -no SOURCE "$mountpoint")" != /dev/mapper/"$files_mapper"* ]]; then
-        echo "cryptfiles(open): $mountpoint is busy" >&2
-        return 1
-      fi
-    else
-      if [[ ! -e /dev/mapper/"$files_mapper" ]]; then
-        sudo cryptsetup --allow-discards --perf-no_read_workqueue --perf-no_write_workqueue \
-          open "$files_block" "$files_mapper" --key-file "$files_key"
-      fi
-      mkdir -p "$mountpoint"
-      sudo mount /dev/mapper/"$files_mapper" "$mountpoint"
-    fi
-    return 0
-  }
-
-  if [[ "$target" == "0" || "$target" == "all" ]]; then
-    open_and_mount "$FILES0_BLOCK" "$FILES0_MAPPER" "$FILES0_MOUNTPOINT" "$FILES0_KEY" || ret=1
-  fi
-
-  if [[ "$target" == "1" || "$target" == "all" ]]; then
-    open_and_mount "$FILES1_BLOCK" "$FILES1_MAPPER" "$FILES1_MOUNTPOINT" "$FILES1_KEY" || ret=1
-  fi
+  for name in main backup; do
+    applies "$target" "$name" || continue
+    resolve "$name" || { ret=1; continue; }
+    open_and_mount "$block" "$mapper" "$mountpoint" "$key" || ret=1
+  done
 
   return "$ret"
 }
 
-closefiles() {
+close_files() {
   local target="${1:-all}"
   local ret=0
+  local block mapper mountpoint key
 
-  if [[ "$target" != "0" && "$target" != "1" && "$target" != "all" ]]; then
-    echo "cryptfiles(close): invalid target"
+  if [[ "$target" != "main" && "$target" != "backup" && "$target" != "all" ]]; then
+    echo "cryptfiles: invalid target '$target' (use main, backup or all)" >&2
     return 1
   fi
 
-  umount_and_close() {
-    local mountpoint="$1"
-    local files_mapper="$2"
-    local ret=0
-
-    if mountpoint -q "$mountpoint"; then
-      if [[ "$(sudo findmnt -no SOURCE "$mountpoint")" != /dev/mapper/"$files_mapper"* ]]; then
-        echo "cryptfiles(close): $mountpoint is mounted on an unexpected device"
-        ret=1
-      else
-        sudo umount "$mountpoint"
-      fi
-    fi
-    if [[ -e /dev/mapper/"$files_mapper" ]]; then
-      sudo cryptsetup close "$files_mapper"
-    fi
-    return "$ret"
-  }
-
-  if [[ "$target" == "0" || "$target" == "all" ]]; then
-    umount_and_close "$FILES0_MOUNTPOINT" "$FILES0_MAPPER" || ret=1
-  fi
-
-  if [[ "$target" == "1" || "$target" == "all" ]]; then
-    umount_and_close "$FILES1_MOUNTPOINT" "$FILES1_MAPPER" || ret=1
-  fi
+  for name in main backup; do
+    applies "$target" "$name" || continue
+    resolve "$name" || { ret=1; continue; }
+    umount_and_close "$mountpoint" "$mapper" || ret=1
+  done
 
   return "$ret"
 }
 
-syncfiles() {
-  # Open both volumes if needed
-  openfiles "all" || {
-    echo "syncfiles: failed to open files" >&2
+# prune_snapshots <snapdir> -> keep only the newest CRYPTFILES_KEEP_SNAPSHOTS
+prune_snapshots() {
+  local snapdir="$1"
+  local keep="${CRYPTFILES_KEEP_SNAPSHOTS:-10}"
+  local snaps=()
+
+  # Timestamped names sort oldest first.
+  mapfile -t snaps < <(find "$snapdir" -mindepth 1 -maxdepth 1 -type d -name "${SNAP_PREFIX}_*" | sort)
+
+  local count=${#snaps[@]}
+  local ret=0
+  if (( count > keep )); then
+    local remove=$(( count - keep )) n
+    for (( n = 0; n < remove; n++ )); do
+      sudo btrfs subvolume delete "${snaps[n]}" || { echo "cryptfiles: failed to prune snapshot ${snaps[n]}" >&2; ret=1; }
+    done
+  fi
+  return "$ret"
+}
+
+# snapshot_volume <mountpoint> <timestamp> -> read-only snapshot of the volume's
+# data (mounted at <mountpoint>) into its already-mounted @snapshots subvolume
+snapshot_volume() {
+  local mountpoint="$1" ts="$2"
+  local snapdir="$mountpoint/$SNAP_MOUNT"
+  local snap="${SNAP_PREFIX}_${ts}"
+
+  if sudo btrfs subvolume snapshot -r "$mountpoint" "$snapdir/$snap"; then
+    prune_snapshots "$snapdir" || return 1
+  else
+    echo "cryptfiles: failed to create snapshot on $mountpoint" >&2
+    return 1
+  fi
+}
+
+mirror_files() {
+  local commit=0
+  local block mapper mountpoint key
+  [[ "${1:-}" == "commit" ]] && commit=1
+
+  open_files "all" || {
+    echo "cryptfiles: failed to open volumes" >&2
     return 1
   }
 
-  local dry_run_flag="--dry-run"
-  if [[ "${1:-}" == "commit" ]]; then
-    dry_run_flag=""
-  else
-    echo "cryptfiles(sync): running in dry-run mode. use 'commit' as argument to apply changes."
-  fi
-  # Use rsync to synchronize the content of FILES0_MOUNTPOINT to FILES1_MOUNTPOINT,
-  # deleting files in files1 that do not exist in files0.
-  rsync -avh ${dry_run_flag} --delete "${FILES0_MOUNTPOINT}/" "${FILES1_MOUNTPOINT}/"
+  resolve main; local src="$mountpoint"
+  resolve backup; local dst="$mountpoint"
 
-  return 0
+  if ! mountpoint -q "$src"; then
+    echo "cryptfiles: main $src is not mounted; aborting" >&2
+    return 1
+  fi
+  if ! mountpoint -q "$dst"; then
+    echo "cryptfiles: backup $dst is not mounted; aborting" >&2
+    return 1
+  fi
+  if [[ "$src" == "$dst" ]]; then
+    echo "cryptfiles: main and backup resolve to the same path; aborting" >&2
+    return 1
+  fi
+  if [[ -z "$(sudo find "$src" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+    echo "cryptfiles: main $src is empty; refusing to mirror (would delete all of backup)" >&2
+    return 1
+  fi
+
+  # One-way mirror of the data subvolume: main's @files -> backup's @files.
+  # Exclude the nested snapshots mount so it is neither copied nor deleted.
+  local rsync_args=(-avh --delete --exclude="/$SNAP_MOUNT/" "$src/" "$dst/")
+
+  if (( commit == 0 )); then
+    if ! rsync --dry-run "${rsync_args[@]}"; then
+      echo "cryptfiles: rsync dry-run failed" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  if ! rsync "${rsync_args[@]}"; then
+    echo "cryptfiles: rsync failed; skipping checkpoint" >&2
+    return 1
+  fi
+
+  # Snapshot both volumes at the same timestamp after a successful mirror.
+  local ret=0 ts
+  ts="$(date +%Y%m%d_%H%M%S_%s)"
+  snapshot_volume "$src" "$ts" || ret=1
+  snapshot_volume "$dst" "$ts" || ret=1
+  return "$ret"
 }
 
 print_help() {
-  cat <<EOF
+  cat <<'EOF'
 usage: cryptfiles command [target]
 
 Commands:
-  open [target]    Open and mount the LUKS volume. 'target' can be 0, 1, or "all" (default: 0).
-  close [target]   Unmount and close the LUKS volume. 'target' can be 0, 1, or "all" (default: all).
-  sync [commit]    Synchronize files from FILES0 to FILES1 using rsync.
-                   By default, runs in dry-run mode (simulation). Use 'commit' to apply changes.
+  open [target]    Open a LUKS volume, mount @files at its mountpoint and mount
+                   @snapshots at <mountpoint>/.snapshots.
+                   Target: main, backup or all (default: main).
+  close [target]   Unmount (.snapshots first, then @files) and close the LUKS
+                   volume.
+                   Target: main, backup or all (default: all).
+  mirror [commit]  One-way mirror main's @files -> backup's @files (rsync --delete),
+                   excluding .snapshots. Dry-run by default; 'mirror commit' applies
+                   the mirror immediately, without further confirmation, and then
+                   checkpoints both volumes with an identical cryptfiles_<ts>
+                   snapshot in @snapshots.
+
+Configuration (environment variables, e.g. in ~/.zshrc):
+  CRYPTFILES_MAIN_BLOCK       (required) LUKS block device for the main volume
+  CRYPTFILES_MAIN_MAPPER      (default: cryptfiles_main)
+  CRYPTFILES_MAIN_MOUNTPOINT  (default: $HOME/cryptfiles_main)
+  CRYPTFILES_MAIN_KEY         (default: prompt interactively)
+  ... same set for CRYPTFILES_BACKUP_*
+  CRYPTFILES_KEEP_SNAPSHOTS   (default: 10)
+
+Old files are browsable under <mountpoint>/.snapshots/cryptfiles_<timestamp> while
+a volume is open. Snapshot names are cryptfiles_YYYYMMDD_HHMMSS_EPOCH; only names
+with that prefix are pruned.
 EOF
 }
 
@@ -143,15 +302,15 @@ fi
 case "$1" in
 open)
   shift
-  openfiles "$@"
+  open_files "$@"
   ;;
 close)
   shift
-  closefiles "$@"
+  close_files "$@"
   ;;
-sync)
+mirror)
   shift
-  syncfiles "$@"
+  mirror_files "$@"
   ;;
 *)
   print_help

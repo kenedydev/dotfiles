@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""Open, close and mirror the LUKS volumes holding the encrypted files.
+
+Configuration comes entirely from environment variables, one set per volume
+role, 'main' and 'backup':
+
+  CRYPTFILES_MAIN_UUID  (required) UUID of the LUKS block device
+  CRYPTFILES_MAIN_KEY   (optional) key file to unlock LUKS, prompts if unset
+
+(same set for CRYPTFILES_BACKUP_*)
+
+The block device path is derived from the UUID, so it survives the disks being
+renumbered between boots. The UUID also identifies a volume: an open mapper is
+only trusted while it is backed by the expected block.
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+import time
+from contextlib import suppress
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+SUBVOL_FILES = "@files"
+SUBVOL_SNAP = "@snapshots"
+
+SNAP_MOUNT = ".snapshots"
+SNAP_PREFIX = "cryptfiles"
+
+# Retention policy: the most recent N snapshots, then 1 per day, then 1 per week
+KEEP_LATEST = 7
+KEEP_DAILY = 7
+KEEP_WEEKLY = 7
+
+CRYPTSETUP_FLAGS = ("--allow-discards", "--perf-no_read_workqueue", "--perf-no_write_workqueue")
+
+ROLES = ("main", "backup")
+TARGETS = (*ROLES, "all")
+
+SCRIPT_NAME = Path(__file__).name
+
+
+class Error(Exception):
+    """An expected failure, reported to the user without a traceback."""
+
+
+@dataclass
+class Volume:
+    role: str
+    uuid: str
+    key: str
+
+    @property
+    def mapper(self):
+        return f"cryptfiles_{self.role}"
+
+    @property
+    def device(self):
+        return Path("/dev/mapper") / self.mapper
+
+    @property
+    def mountpoint(self):
+        return Path.home() / f"cryptfiles_{self.role}"
+
+    @property
+    def snapdir(self):
+        return self.mountpoint / SNAP_MOUNT
+
+    @property
+    def mounts(self):
+        """Where each subvolume belongs."""
+        return {SUBVOL_FILES: self.mountpoint, SUBVOL_SNAP: self.snapdir}
+
+
+def load_volume(role):
+    """Build a volume from its environment variables."""
+    variable = f"CRYPTFILES_{role.upper()}_UUID"
+    uuid = os.environ.get(variable, "")
+    if not uuid:
+        raise Error(f"required variable '{variable}' is not set")
+    return Volume(role, uuid, os.environ.get(f"CRYPTFILES_{role.upper()}_KEY", ""))
+
+
+def run(*command):
+    """Run a command, raising Error if it fails."""
+    if subprocess.run(command, check=False).returncode != 0:
+        raise Error(f"command failed: {' '.join(command)}")
+
+
+def query(*command):
+    """Run a command and return its output, or "" if it fails."""
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def resolve_block(uuid):
+    """The block device currently holding the UUID, or None."""
+    link = Path("/dev/disk/by-uuid") / uuid
+    # udev may not have populated by-uuid (early boot, no udevd)
+    path = link.resolve() if link.exists() else Path(query("blkid", "-U", uuid) or "/nonexistent")
+    return path if path.is_block_device() else None
+
+
+def check_mapper(volume):
+    """Assert the open mapper is backed by the block holding the volume's UUID.
+
+    The mapper name alone says nothing about what is behind it.
+    """
+    block = resolve_block(volume.uuid)
+    if block is None:
+        raise Error(f"no block device holds the UUID {volume.uuid} of '{volume.role}'")
+
+    slaves = Path("/sys/class/block") / volume.device.resolve().name / "slaves"
+    if not (slaves / block.name).exists():
+        raise Error(f"'{volume.mapper}' is not backed by {block}, the block holding the UUID {volume.uuid}")
+
+
+def check_mount(volume, subvol):
+    """Assert the volume is the expected one and holds the subvolume where it belongs."""
+    check_mapper(volume)
+
+    path = volume.mounts[subvol]
+    source = query("findmnt", "-no", "SOURCE", str(path))
+    if source != f"{volume.device}[/{subvol}]":
+        raise Error(f"{path} does not hold {subvol} of '{volume.role}' (found: {source or 'nothing mounted'})")
+
+
+def is_empty(path):
+    """True when the path is missing or is an empty directory."""
+    if not path.exists():
+        return True
+    try:
+        return not any(path.iterdir())
+    except OSError:
+        return False
+
+
+def mount_subvol(volume, subvol):
+    """Mount the subvolume, or assert the right one is already mounted there."""
+    path = volume.mounts[subvol]
+    if path.is_mount():
+        check_mount(volume, subvol)
+        return
+
+    # Create the mountpoint as the user so it belongs to whoever owns the parent
+    # directory, escalating only when that is not allowed.
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        run("sudo", "mkdir", "-p", str(path))
+
+    run("sudo", "mount", "-o", f"subvol={subvol}", str(volume.device), str(path))
+
+
+def open_volume(volume):
+    """Unlock the LUKS block and mount both of its subvolumes.
+
+    An already mounted volume is completed rather than reopened: an interrupted
+    run can leave the files subvolume mounted with the snapshots one missing.
+    """
+    if volume.mountpoint.is_mount():
+        check_mount(volume, SUBVOL_FILES)
+        mount_subvol(volume, SUBVOL_SNAP)
+        return
+
+    block = resolve_block(volume.uuid)
+    if block is None:
+        raise Error(f"no block device holds the UUID {volume.uuid} of '{volume.role}'")
+
+    if not is_empty(volume.mountpoint):
+        raise Error(f"{volume.mountpoint} is not empty or could not be inspected; refusing to mount over it")
+
+    key = ("--key-file", volume.key) if volume.key else ()
+    try:
+        run("sudo", "cryptsetup", *CRYPTSETUP_FLAGS, "open", str(block), volume.mapper, *key)
+        mount_subvol(volume, SUBVOL_FILES)
+        mount_subvol(volume, SUBVOL_SNAP)
+    except Error:
+        print(f"{SCRIPT_NAME}: failed to open '{volume.role}', rolling back", file=sys.stderr)
+        with suppress(Error):
+            close_volume(volume)
+        raise
+
+
+def close_volume(volume):
+    """Unmount both subvolumes and lock the LUKS block.
+
+    Nothing is torn down before the mapper is confirmed to be the volume's own.
+    """
+    if not volume.device.exists():
+        return
+
+    if volume.mountpoint.is_mount():
+        check_mount(volume, SUBVOL_FILES)
+        if volume.snapdir.is_mount():
+            check_mount(volume, SUBVOL_SNAP)
+            run("sudo", "umount", str(volume.snapdir))
+        run("sudo", "umount", str(volume.mountpoint))
+
+    check_mapper(volume)
+
+    run("sudo", "cryptsetup", "close", volume.mapper)
+
+
+def sync(source, destination, dry_run):
+    """Mirror source onto destination, returning True if anything changed.
+
+    --itemize-changes prints one line per change and nothing when the volumes
+    already match, which is what decides whether a snapshot is needed.
+    """
+    if all(entry.name == SNAP_MOUNT for entry in source.mountpoint.iterdir()):
+        raise Error(f"{source.mountpoint} holds no files, refusing to sync onto '{destination.role}'")
+
+    command = ["rsync", "--archive", "--human-readable", "--itemize-changes", "--delete"]
+    command += ["--dry-run"] if dry_run else []
+    command += [f"--exclude=/{SNAP_MOUNT}/", f"{source.mountpoint}/", f"{destination.mountpoint}/"]
+
+    changed = False
+    with subprocess.Popen(command, text=True, stdout=subprocess.PIPE) as process:
+        for line in process.stdout:
+            changed = True
+            print(line, end="")
+    if process.returncode != 0:
+        raise Error(f"rsync failed while mirroring '{source.role}' onto '{destination.role}'")
+
+    return changed
+
+
+def local_time(epoch):
+    """The epoch as a local-time datetime, used for snapshot names and buckets."""
+    return datetime.fromtimestamp(epoch, timezone.utc).astimezone()
+
+
+def snapshots(volume):
+    """The volume's snapshots as (epoch, path) pairs, newest first."""
+    found = []
+    for path in volume.snapdir.glob(f"{SNAP_PREFIX}_*"):
+        epoch = path.name.rpartition("_")[2]
+        if epoch.isdigit():
+            found.append((int(epoch), path))
+    return sorted(found, reverse=True)
+
+
+def snapshot(volume, name):
+    """Take a read-only snapshot of the files subvolume."""
+    check_mount(volume, SUBVOL_SNAP)
+    run("sudo", "btrfs", "subvolume", "snapshot", "-r", str(volume.mountpoint), str(volume.snapdir / name))
+
+
+def prune(volume, now):
+    """Delete the snapshots the retention policy no longer covers."""
+    check_mount(volume, SUBVOL_SNAP)
+
+    days, weeks = set(), set()
+    for count, (epoch, path) in enumerate(snapshots(volume), start=1):
+        moment = local_time(epoch)
+        day, week = moment.strftime("%Y%m%d"), moment.strftime("%G-%V")
+        age_days = (now - epoch) // 86400
+
+        if count <= KEEP_LATEST or (age_days <= KEEP_DAILY and day not in days):
+            days.add(day)
+            weeks.add(week)
+        elif age_days // 7 <= KEEP_WEEKLY and week not in weeks:
+            weeks.add(week)
+        else:
+            run("sudo", "btrfs", "subvolume", "delete", str(path))
+
+
+def each_volume(roles, action):
+    """Apply the action to every role, continuing past a failing one."""
+    failed = False
+    for role in roles:
+        try:
+            action(load_volume(role))
+        except Error as error:
+            print(f"{SCRIPT_NAME}: {error}", file=sys.stderr)
+            failed = True
+    if failed:
+        raise SystemExit(1)
+
+
+def mirror(commit):
+    """Mirror main onto backup, then snapshot and prune both volumes."""
+    volumes = [load_volume(role) for role in ROLES]
+    for volume in volumes:
+        open_volume(volume)
+
+    if not commit:
+        print(f"{SCRIPT_NAME}: dry run, use 'commit' to apply changes")
+
+    changed = sync(*volumes, dry_run=not commit)
+
+    # An unchanged mirror matches the snapshots already taken, and a dry run
+    # wrote nothing, so neither has anything worth snapshotting.
+    if not changed:
+        print(f"{SCRIPT_NAME}: backup already matches main, no snapshot needed")
+        return
+
+    if not commit:
+        return
+
+    now = int(time.time())
+    name = f"{SNAP_PREFIX}_{local_time(now):%Y%m%d_%H%M%S}_{now}"
+    each_volume(ROLES, lambda volume: (snapshot(volume, name), prune(volume, now)))
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        prog=SCRIPT_NAME,
+        description="Manage the LUKS volumes holding the encrypted files.",
+        epilog=f"Snapshots are named {SNAP_PREFIX}_YYYYMMDD_HHMMSS_EPOCH. After each one the older "
+        f"snapshots are pruned: the last {KEEP_LATEST} are always kept, plus 1 per day for "
+        f"{KEEP_DAILY} days and 1 per week for {KEEP_WEEKLY} weeks.",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    open_command = commands.add_parser("open", help="unlock and mount a volume")
+    open_command.add_argument("target", nargs="?", default="main", choices=TARGETS, help="default: main")
+
+    close_command = commands.add_parser("close", help="unmount and lock a volume")
+    close_command.add_argument("target", nargs="?", default="all", choices=TARGETS, help="default: all")
+
+    mirror_command = commands.add_parser("mirror", help="mirror main onto backup, then snapshot both")
+    mirror_command.add_argument(
+        "commit", nargs="?", choices=("commit",), help="apply the changes instead of simulating them"
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_arguments()
+
+    if args.command == "mirror":
+        mirror(args.commit == "commit")
+    else:
+        roles = ROLES if args.target == "all" else (args.target,)
+        each_volume(roles, open_volume if args.command == "open" else close_volume)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Error as error:
+        sys.exit(f"{SCRIPT_NAME}: {error}")

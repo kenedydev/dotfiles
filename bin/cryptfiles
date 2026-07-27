@@ -100,7 +100,7 @@ def resolve_block(uuid):
     """The block device currently holding the UUID, or None."""
     link = Path("/dev/disk/by-uuid") / uuid
     # udev may not have populated by-uuid (early boot, no udevd)
-    path = link.resolve() if link.exists() else Path(query("blkid", "-U", uuid) or "/nonexistent")
+    path = link.resolve() if link.exists() else Path(query("sudo", "blkid", "-U", uuid) or "/nonexistent")
     return path if path.is_block_device() else None
 
 
@@ -210,7 +210,7 @@ def sync(source, destination, dry_run):
     if all(entry.name == SNAP_MOUNT for entry in source.mountpoint.iterdir()):
         raise Error(f"{source.mountpoint} holds no files, refusing to sync onto '{destination.role}'")
 
-    command = ["rsync", "--archive", "--human-readable", "--verbose", "--delete"]
+    command = ["sudo", "rsync", "--archive", "--human-readable", "--verbose", "--delete"]
     command += ["--dry-run"] if dry_run else []
     command += [f"--exclude=/{SNAP_MOUNT}/", f"{source.mountpoint}/", f"{destination.mountpoint}/"]
 
@@ -334,6 +334,9 @@ def parse_arguments():
 
 
 def main():
+    if os.geteuid() == 0:
+        raise Error("run as your own user, not root; sudo is used per command")
+
     args = parse_arguments()
 
     if args.command == "mirror":

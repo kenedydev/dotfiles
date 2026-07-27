@@ -206,23 +206,25 @@ def close_volume(volume):
 
 
 def sync(source, destination, dry_run):
-    """Mirror source onto destination, returning True if anything changed.
-
-    --itemize-changes prints one line per change and nothing when the volumes
-    already match, which is what decides whether a snapshot is needed.
-    """
+    """Mirror source onto destination, returning True if anything changed."""
     if all(entry.name == SNAP_MOUNT for entry in source.mountpoint.iterdir()):
         raise Error(f"{source.mountpoint} holds no files, refusing to sync onto '{destination.role}'")
 
-    command = ["rsync", "--archive", "--human-readable", "--itemize-changes", "--delete"]
+    command = ["rsync", "--archive", "--human-readable", "--verbose", "--delete"]
     command += ["--dry-run"] if dry_run else []
     command += [f"--exclude=/{SNAP_MOUNT}/", f"{source.mountpoint}/", f"{destination.mountpoint}/"]
 
-    changed = False
+    changed, listing = False, False
     with subprocess.Popen(command, text=True, stdout=subprocess.PIPE) as process:
         for line in process.stdout:
-            changed = True
             print(line, end="")
+            entry = line.strip()
+            if entry.endswith("file list"):
+                listing = True
+            elif not entry:
+                listing = False
+            elif listing:
+                changed = True
     if process.returncode != 0:
         raise Error(f"rsync failed while mirroring '{source.role}' onto '{destination.role}'")
 
@@ -293,13 +295,13 @@ def mirror(commit):
 
     changed = sync(*volumes, dry_run=not commit)
 
+    if not commit:
+        return
+
     # An unchanged mirror matches the snapshots already taken, and a dry run
     # wrote nothing, so neither has anything worth snapshotting.
     if not changed:
         print(f"{SCRIPT_NAME}: backup already matches main, no snapshot needed")
-        return
-
-    if not commit:
         return
 
     now = int(time.time())

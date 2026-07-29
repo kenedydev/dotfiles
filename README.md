@@ -93,3 +93,71 @@ sudo install -Dm644 ~/dotfiles/rootsnap/90_rootsnap.hook /etc/pacman.d/hooks/90_
 sudo install -Dm644 ~/dotfiles/rootsnap/rootsnap.service /etc/systemd/system/rootsnap.service
 sudo systemctl enable rootsnap.service
 ```
+
+---
+
+## Encrypted files (`bin/cryptfiles`)
+
+`cryptfiles` opens, closes and mirrors the two LUKS volumes holding the
+encrypted files: `main`, the one in daily use, and `backup`, its mirror. Each
+holds a Btrfs filesystem with two subvolumes, `@files` for the files and
+`@snapshots` for the read-only snapshots taken after each mirror.
+
+| Role     | Mapper              | Mounted at            | Snapshots at                     |
+| -------- | ------------------- | --------------------- | -------------------------------- |
+| `main`   | `cryptfiles_main`   | `~/cryptfiles_main`   | `~/cryptfiles_main/.snapshots`   |
+| `backup` | `cryptfiles_backup` | `~/cryptfiles_backup` | `~/cryptfiles_backup/.snapshots` |
+
+**Requires:** Python ≥ 3.9, `cryptsetup`, `btrfs-progs`, `rsync` and
+`util-linux`. Must run as your own user, not as root, since it calls `sudo` per
+command. The volumes must already exist, formatted as Btrfs with the `@files`
+and `@snapshots` subvolumes.
+
+### Setup
+
+Symlink it into a directory on your `PATH`:
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf ~/dotfiles/bin/cryptfiles ~/.local/bin/cryptfiles
+```
+
+Each role is configured by two environment variables, where `<ROLE>` is `MAIN`
+or `BACKUP`. Export them from your shell profile (or from a private,
+uncommitted file that it sources):
+
+| Variable                 | Required | Purpose                                                  |
+| ------------------------ | -------- | -------------------------------------------------------- |
+| `CRYPTFILES_<ROLE>_UUID` | yes      | UUID of the LUKS block device                            |
+| `CRYPTFILES_<ROLE>_KEY`  | no       | Key file to unlock it, prompts for a passphrase if unset |
+
+The UUID is the one of the LUKS block itself, not the one of the Btrfs
+filesystem inside it. `blkid` on a still locked partition reports the former:
+
+```bash
+export CRYPTFILES_MAIN_UUID=$(sudo blkid -s UUID -o value /dev/nvme0n1p1)
+```
+
+The device path is derived from the UUID at each run, and a mapper backed by any
+other block is refused.
+
+### Usage
+
+```bash
+cryptfiles open [main|backup|all]    # default: main
+cryptfiles close [main|backup|all]   # default: all
+cryptfiles mirror [commit]           # default: simulate
+```
+
+`open` unlocks the LUKS block and mounts both subvolumes, `close` unmounts them
+and locks the block again. An already mounted volume is completed rather than
+reopened, so an interrupted run leaving `@files` mounted without `@snapshots` is
+fixed by opening it again.
+
+`mirror` opens both volumes, mirrors `main` onto `backup` with `rsync --delete`
+(excluding `.snapshots`) and then snapshots both. Without the `commit` argument
+it only simulates the run. Nothing is snapshotted when the mirror changed
+nothing, and an empty `main` is never synced onto `backup`.
+
+Snapshots are named `cryptfiles_YYYYMMDD_HHMMSS_EPOCH`. After each one the last
+7 are always kept, plus one per day for 7 days and one per week for 7 weeks.

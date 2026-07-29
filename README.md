@@ -1,9 +1,6 @@
 # dotfiles
 
-Personal configuration files, scripts, and system resources for my Arch Linux
-setup. Each top-level directory groups the files for one tool or concern, and
-the repo is the single source of truth. See each section below for how to
-install its files.
+Personal configuration files, scripts, and system resources for my Arch Linux setup. Each top-level directory groups the files for one tool or concern, and the repo is the single source of truth. See each section below for how to install its files.
 
 Clone it wherever you like; the commands below assume `~/dotfiles`:
 
@@ -15,9 +12,7 @@ git clone https://github.com/kenedydev/dotfiles.git ~/dotfiles
 
 ## Neovim (`nvim/`)
 
-A minimal, single-file Neovim config aimed at quick edits in the terminal, with
-fast startup and few moving parts. [lazy.nvim][lazy] is bootstrapped
-automatically on the first launch, so there is nothing to install by hand.
+A minimal, single-file Neovim config aimed at quick edits in the terminal, with fast startup and few moving parts. [lazy.nvim][lazy] is bootstrapped automatically on the first launch, so there is nothing to install by hand.
 
 **Requires:** Neovim ≥ 0.11
 
@@ -26,9 +21,7 @@ automatically on the first launch, so there is nothing to install by hand.
 | `init.lua`       | `~/.config/nvim/init.lua`       | Settings, keymaps and plugin specs           |
 | `lazy-lock.json` | `~/.config/nvim/lazy-lock.json` | Pinned plugin versions (reproducible builds) |
 
-Plugins: [tokyodark][tokyodark] (theme), [fzf-lua][fzf] (fuzzy finder),
-[lualine][lualine] (statusline), [snacks][snacks] (QoL) and
-[which-key][whichkey] (keymap hints). Leader is `<Space>`.
+Plugins: [tokyodark][tokyodark] (theme), [fzf-lua][fzf] (fuzzy finder), [lualine][lualine] (statusline), [snacks][snacks] (QoL) and [which-key][whichkey] (keymap hints). Leader is `<Space>`.
 
 ### Setup
 
@@ -38,9 +31,7 @@ ln -sf ~/dotfiles/nvim/init.lua ~/.config/nvim/init.lua
 ln -sf ~/dotfiles/nvim/lazy-lock.json ~/.config/nvim/lazy-lock.json
 ```
 
-Then open `nvim`. On the first run, lazy.nvim clones itself and installs the
-plugins. To keep versions frozen and reproducible, commit `lazy-lock.json`
-after every `:Lazy update`.
+Then open `nvim`. On the first run, lazy.nvim clones itself and installs the plugins. To keep versions frozen and reproducible, commit `lazy-lock.json` after every `:Lazy update`.
 
 [lazy]: https://github.com/folke/lazy.nvim
 [tokyodark]: https://github.com/tiagovla/tokyodark.nvim
@@ -53,15 +44,9 @@ after every `:Lazy update`.
 
 ## Root snapshots (`rootsnap/`)
 
-`rootsnap` backs up the EFI partition and then takes a read-only Btrfs snapshot
-of the root subvolume. Retention keeps the last 7 snapshots, plus one per day
-for 7 days and one per week for 7 weeks. Only the root subvolume is snapshotted,
-so nested subvolumes (e.g. `/home`) are not included.
+`rootsnap` backs up the EFI partition and then takes a read-only Btrfs snapshot of the root subvolume. Retention keeps the last 7 snapshots, plus one per day for 7 days and one per week for 7 weeks. Only the root subvolume is snapshotted, so nested subvolumes (e.g. `/home`) are not included.
 
-**Requires:** a Btrfs root, an ESP mounted at `/efi`, a subvolume mounted at
-`/.snapshots`, and `rsync` + `btrfs-progs`. Must run as root. Snapshots are
-created under `/.snapshots`; the EFI backup is mirrored to `/efi_backup` so it is
-captured inside each snapshot.
+**Requires:** a Btrfs root, an ESP mounted at `/efi`, a subvolume mounted at `/.snapshots`, and `rsync` + `btrfs-progs`. Must run as root. Snapshots are created under `/.snapshots`; the EFI backup is mirrored to `/efi_backup` so it is captured inside each snapshot.
 
 ### Setup
 
@@ -72,9 +57,7 @@ sudo install -Dm755 ~/dotfiles/rootsnap/rootsnap /usr/local/bin/rootsnap
 sudo rootsnap -n <name>   # <name> is an optional label, e.g. "manual"
 ```
 
-It is copied rather than symlinked because it installs to a root-owned system
-path and may run before a home directory is mounted, where a symlink into `~`
-could dangle. Re-run the install command after editing the script.
+It is copied rather than symlinked because it installs to a root-owned system path and may run before a home directory is mounted, where a symlink into `~` could dangle. Re-run the install command after editing the script.
 
 ### Automatic triggers
 
@@ -98,20 +81,14 @@ sudo systemctl enable rootsnap.service
 
 ## Encrypted files (`bin/cryptfiles`)
 
-`cryptfiles` opens, closes and mirrors the two LUKS volumes holding the
-encrypted files: `main`, the one in daily use, and `backup`, its mirror. Each
-holds a Btrfs filesystem with two subvolumes, `@files` for the files and
-`@snapshots` for the read-only snapshots taken after each mirror.
+`cryptfiles` opens, closes and mirrors the two LUKS volumes holding the encrypted files: `main`, the one in daily use, and `backup`, its mirror. Each holds a Btrfs filesystem with two subvolumes, `@files` for the files and `@snapshots` for the read-only snapshots taken after each mirror.
 
 | Role     | Mapper              | Mounted at            | Snapshots at                     |
 | -------- | ------------------- | --------------------- | -------------------------------- |
 | `main`   | `cryptfiles_main`   | `~/cryptfiles_main`   | `~/cryptfiles_main/.snapshots`   |
 | `backup` | `cryptfiles_backup` | `~/cryptfiles_backup` | `~/cryptfiles_backup/.snapshots` |
 
-**Requires:** Python ≥ 3.9, `cryptsetup`, `btrfs-progs`, `rsync` and
-`util-linux`. Must run as your own user, not as root, since it calls `sudo` per
-command. The volumes must already exist, formatted as Btrfs with the `@files`
-and `@snapshots` subvolumes.
+**Requires:** Python ≥ 3.9, `cryptsetup`, `btrfs-progs`, `rsync` and `util-linux`. Must run as your own user, not as root, since it calls `sudo` per command. The volumes must already exist, formatted as Btrfs with the `@files` and `@snapshots` subvolumes.
 
 ### Setup
 
@@ -122,24 +99,20 @@ mkdir -p ~/.local/bin
 ln -sf ~/dotfiles/bin/cryptfiles ~/.local/bin/cryptfiles
 ```
 
-Each role is configured by two environment variables, where `<ROLE>` is `MAIN`
-or `BACKUP`. Export them from your shell profile (or from a private,
-uncommitted file that it sources):
+Each role is configured by two environment variables, where `<ROLE>` is `MAIN` or `BACKUP`. Export them from your shell profile (or from a private, uncommitted file that it sources):
 
 | Variable                 | Required | Purpose                                                  |
 | ------------------------ | -------- | -------------------------------------------------------- |
 | `CRYPTFILES_<ROLE>_UUID` | yes      | UUID of the LUKS block device                            |
 | `CRYPTFILES_<ROLE>_KEY`  | no       | Key file to unlock it, prompts for a passphrase if unset |
 
-The UUID is the one of the LUKS block itself, not the one of the Btrfs
-filesystem inside it. `blkid` on a still locked partition reports the former:
+The UUID is the one of the LUKS block itself, not the one of the Btrfs filesystem inside it. `blkid` on a still locked partition reports the former:
 
 ```bash
 export CRYPTFILES_MAIN_UUID=$(sudo blkid -s UUID -o value /dev/nvme0n1p1)
 ```
 
-The device path is derived from the UUID at each run, and a mapper backed by any
-other block is refused.
+The device path is derived from the UUID at each run, and a mapper backed by any other block is refused.
 
 ### Usage
 
@@ -149,15 +122,8 @@ cryptfiles close [main|backup|all]   # default: all
 cryptfiles mirror [commit]           # default: simulate
 ```
 
-`open` unlocks the LUKS block and mounts both subvolumes, `close` unmounts them
-and locks the block again. An already mounted volume is completed rather than
-reopened, so an interrupted run leaving `@files` mounted without `@snapshots` is
-fixed by opening it again.
+`open` unlocks the LUKS block and mounts both subvolumes, `close` unmounts them and locks the block again. An already mounted volume is completed rather than reopened, so an interrupted run leaving `@files` mounted without `@snapshots` is fixed by opening it again.
 
-`mirror` opens both volumes, mirrors `main` onto `backup` with `rsync --delete`
-(excluding `.snapshots`) and then snapshots both. Without the `commit` argument
-it only simulates the run. Nothing is snapshotted when the mirror changed
-nothing, and an empty `main` is never synced onto `backup`.
+`mirror` opens both volumes, mirrors `main` onto `backup` with `rsync --delete` (excluding `.snapshots`) and then snapshots both. Without the `commit` argument it only simulates the run. Nothing is snapshotted when the mirror changed nothing, and an empty `main` is never synced onto `backup`.
 
-Snapshots are named `cryptfiles_YYYYMMDD_HHMMSS_EPOCH`. After each one the last
-7 are always kept, plus one per day for 7 days and one per week for 7 weeks.
+Snapshots are named `cryptfiles_YYYYMMDD_HHMMSS_EPOCH`. After each one the last 7 are always kept, plus one per day for 7 days and one per week for 7 weeks.

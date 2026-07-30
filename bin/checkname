@@ -32,6 +32,10 @@ STANDARD_NAMES = {
 # and would leave the ".tar" behind.
 COMPOUND_EXTENSIONS = (".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tar.lz")
 
+# What Path.name reports for a path that ends in a component naming no entry of
+# its own: "." and "..", and "" for the root and for a bare ".".
+NAMELESS_COMPONENTS = {"", ".", ".."}
+
 SEPARATOR = "_"
 PATTERN_INVALID_CHARACTERS = r"[^a-z0-9]+"
 PATTERN_EXTENSION = r"[a-zA-Z0-9]+"
@@ -99,7 +103,13 @@ def is_valid_name(path):
 
     Validity is derived from the normalizer instead of being restated as a rule
     of its own, so the two cannot disagree and flag a name that cannot be fixed.
+
+    A path ending in "." or ".." holds no name to judge. The directory it refers
+    to is reachable under its real name, and the normalizer would read the dots
+    as a name that folds away to nothing.
     """
+    if path.name in NAMELESS_COMPONENTS:
+        return True
     return path.name in STANDARD_NAMES or target_name(path) == path.name
 
 

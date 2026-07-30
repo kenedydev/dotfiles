@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""Report or normalize file and directory names to lowercase snake_case.
-
-The convention:
-  name        [a-z0-9] words joined by "_". Accents fold to their base letter,
-              every other invalid character becomes a separator.
-  extension   ASCII letters and digits only, lowercased. Surrounding whitespace
-              is trimmed off, but a suffix that needs any other change is not an
-              extension, and is normalized as part of the name rather than
-              repaired.
-"""
 import argparse
 import os
 import re
@@ -28,34 +18,22 @@ STANDARD_NAMES = {
     "Makefile",
 }
 
-# Extensions that a plain suffix search cannot find, as it stops at the last dot
-# and would leave the ".tar" behind.
+# A plain suffix search stops at the last dot and would leave the ".tar" behind.
 COMPOUND_EXTENSIONS = (".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tar.lz")
 
-# What Path.name reports for a path that ends in a component naming no entry of
-# its own: "." and "..", and "" for the root and for a bare ".".
+# What Path.name reports for a path naming no entry of its own: "." and "..", and
+# "" for the root and for a bare ".".
 NAMELESS_COMPONENTS = {"", ".", ".."}
 
 SEPARATOR = "_"
 PATTERN_INVALID_CHARACTERS = r"[^a-z0-9]+"
 PATTERN_EXTENSION = r"[a-zA-Z0-9]+"
-# Any interleaving of trailing dots and whitespace, stripped in one pass.
 TRAILING_NOISE = string.whitespace + "."
 
 SCRIPT_NAME = Path(__file__).name
 
 
 def split_name(path):
-    """Split a name into (prefix, stem, extension).
-
-    The prefix is "." for hidden entries. Directories have no extension, and a
-    suffix is only an extension if it matches PATTERN_EXTENSION once its padding
-    is trimmed.
-
-    A symlink is judged by its own name, never by what it points at, so that the
-    same link is normalized the same way whether its target is a file, is a
-    directory, or is missing altogether.
-    """
     prefix = "." if path.name.startswith(".") else ""
     # Trailing dots and whitespace go first, or the search below finds a blank
     # segment after the last dot instead of the real extension.
@@ -78,49 +56,30 @@ def split_name(path):
 
 
 def normalize_string(text):
-    """Fold accents, lowercase, and collapse each run of invalid characters into
-    a single separator.
-
-    Only the combining marks are dropped. A character with no ASCII form of its
-    own (Ω, ß, kanji) stays in and becomes a separator, as dropping it would
-    join its neighbours instead.
-    """
     decomposed = unicodedata.normalize("NFD", text)
+    # Only combining marks are dropped. A character with no ASCII form of its own
+    # (Ω, ß, kanji) stays in and becomes a separator, as dropping it would join
+    # its neighbours instead.
     unaccented = "".join(char for char in decomposed if not unicodedata.combining(char))
     normalized = re.sub(PATTERN_INVALID_CHARACTERS, SEPARATOR, unaccented.lower())
     return normalized.strip(SEPARATOR)
 
 
 def target_name(path):
-    """The name this path should have, or "" if nothing would be left of it."""
     prefix, stem, extension = split_name(path)
     stem = normalize_string(stem)
     return prefix + stem + extension.lower() if stem else ""
 
 
 def is_valid_name(path):
-    """A name is valid when normalizing it would change nothing.
-
-    Validity is derived from the normalizer instead of being restated as a rule
-    of its own, so the two cannot disagree and flag a name that cannot be fixed.
-
-    A path ending in "." or ".." holds no name to judge. The directory it refers
-    to is reachable under its real name, and the normalizer would read the dots
-    as a name that folds away to nothing.
-    """
+    # A path ending in "." or ".." holds no name to judge, and the normalizer
+    # would read the dots as a name that folds away to nothing.
     if path.name in NAMELESS_COMPONENTS:
         return True
     return path.name in STANDARD_NAMES or target_name(path) == path.name
 
 
 def normalize_name(path, args, claimed):
-    """Rename a path to its normalized name, skipping anything ambiguous.
-
-    claimed collects the names this run has already taken, so that two paths
-    normalizing to the same name are caught even when the first rename has not
-    touched the disk. It is keyed on the absolute path, or the same name reached
-    through two spellings would count as two.
-    """
     new_name = target_name(path)
     if not new_name:
         print(f"{SCRIPT_NAME}: skipping (name becomes empty): {path}")
@@ -132,14 +91,16 @@ def normalize_name(path, args, claimed):
 
     # Both collision tests come before the dry run reports, or a run that would
     # be refused is announced as a rename that is going to happen.
+    #
+    # claimed catches two paths normalizing to the same name even before the
+    # first rename touches the disk. Keyed on the absolute path, or the same name
+    # reached through two spellings would count as two.
     if os.path.abspath(new_path) in claimed:
         print(f"{SCRIPT_NAME}: error: {new_path} is already taken by another rename, skipping")
         return
 
     # lexists, or a broken symlink sitting on the target name would read as free
-    # and be overwritten by the rename below. A name that is occupied stays
-    # occupied for the whole run: normalizing is idempotent, so an entry already
-    # sitting on a target name is valid and is never renamed away from it.
+    # and be overwritten by the rename below.
     if os.path.lexists(new_path):
         print(f"{SCRIPT_NAME}: error: {new_path} already exists, skipping")
         return

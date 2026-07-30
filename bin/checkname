@@ -122,10 +122,17 @@ def normalize_name(path, args, claimed):
 def main():
     parser = argparse.ArgumentParser(
         prog=SCRIPT_NAME,
-        description="Report or normalize file and directory names to lowercase "
-        "snake_case. Without -n it only lists the names that do not match.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Report or normalize file and directory names to lowercase snake_case.\n"
+        "Without -n it only lists the names that do not match.",
+        epilog="the convention:\n"
+        '  name       [a-z0-9] words joined by "_"; accents fold to their base letter\n'
+        "             and every other invalid character becomes a separator\n"
+        "  extension  ASCII letters and digits only, lowercased; surrounding whitespace\n"
+        "             is trimmed, but a suffix needing any other change is not an\n"
+        "             extension and is normalized as part of the name",
     )
-    parser.add_argument("paths", nargs="+", type=Path, help="files or directories to check")
+    parser.add_argument("paths", metavar="path", nargs="+", type=Path, help="file or directory to check")
     parser.add_argument(
         "-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of only reporting"
     )
@@ -133,11 +140,14 @@ def main():
         "-d",
         "--dry-run",
         action="store_true",
-        help="with -n, show renames without applying them, reporting the ones a collision would block",
+        help="show the renames without applying them, including the ones a collision would block",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens")
     # Intermixed, so a flag is accepted anywhere among the paths.
     args = parser.parse_intermixed_args()
+
+    # A dry run has nothing to show unless it is a dry run of the renames.
+    args.normalize = args.normalize or args.dry_run
 
     # lexists, so a broken symlink counts as a path of its own rather than as a
     # missing one, and gets its name checked like any other entry.

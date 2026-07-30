@@ -103,8 +103,14 @@ def is_valid_name(path):
     return path.name in STANDARD_NAMES or target_name(path) == path.name
 
 
-def normalize_name(path, args):
-    """Rename a path to its normalized name, skipping anything ambiguous."""
+def normalize_name(path, args, claimed):
+    """Rename a path to its normalized name, skipping anything ambiguous.
+
+    claimed collects the names this run has already taken, so that two paths
+    normalizing to the same name are caught even when the first rename has not
+    touched the disk. It is keyed on the absolute path, or the same name reached
+    through two spellings would count as two.
+    """
     new_name = target_name(path)
     if not new_name:
         print(f"{SCRIPT_NAME}: skipping (name becomes empty): {path}")
@@ -114,18 +120,28 @@ def normalize_name(path, args):
     if new_path == path:
         return
 
-    if args.dry_run:
-        print(f"{SCRIPT_NAME}: dry run: {path} -> {new_path}")
+    # Both collision tests come before the dry run reports, or a run that would
+    # be refused is announced as a rename that is going to happen.
+    if os.path.abspath(new_path) in claimed:
+        print(f"{SCRIPT_NAME}: error: {new_path} is already taken by another rename, skipping")
         return
 
     # lexists, or a broken symlink sitting on the target name would read as free
-    # and be overwritten by the rename below.
+    # and be overwritten by the rename below. A name that is occupied stays
+    # occupied for the whole run: normalizing is idempotent, so an entry already
+    # sitting on a target name is valid and is never renamed away from it.
     if os.path.lexists(new_path):
         print(f"{SCRIPT_NAME}: error: {new_path} already exists, skipping")
         return
 
+    if args.dry_run:
+        print(f"{SCRIPT_NAME}: dry run: {path} -> {new_path}")
+        claimed.add(os.path.abspath(new_path))
+        return
+
     try:
         path.rename(new_path)
+        claimed.add(os.path.abspath(new_path))
         if args.verbose:
             print(f"{SCRIPT_NAME}: renamed: {path} -> {new_path}")
     except OSError as error:
@@ -142,7 +158,12 @@ def main():
     parser.add_argument(
         "-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of only reporting"
     )
-    parser.add_argument("-d", "--dry-run", action="store_true", help="with -n, show renames without applying them")
+    parser.add_argument(
+        "-d",
+        "--dry-run",
+        action="store_true",
+        help="with -n, show renames without applying them, reporting the ones a collision would block",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens")
     # Intermixed, so a flag is accepted anywhere among the paths.
     args = parser.parse_intermixed_args()
@@ -160,11 +181,12 @@ def main():
     # queued below it.
     paths.sort(key=lambda path: len(path.absolute().parts), reverse=True)
 
+    claimed = set()
     for path in paths:
         if is_valid_name(path):
             continue
         if args.normalize:
-            normalize_name(path, args)
+            normalize_name(path, args, claimed)
         else:
             print(path)
 

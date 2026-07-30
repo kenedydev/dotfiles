@@ -10,6 +10,7 @@ The convention:
               repaired.
 """
 import argparse
+import os
 import re
 import string
 import sys
@@ -46,13 +47,18 @@ def split_name(path):
     The prefix is "." for hidden entries. Directories have no extension, and a
     suffix is only an extension if it matches PATTERN_EXTENSION once its padding
     is trimmed.
+
+    A symlink is judged by its own name, never by what it points at, so that the
+    same link is normalized the same way whether its target is a file, is a
+    directory, or is missing altogether.
     """
     prefix = "." if path.name.startswith(".") else ""
     # Trailing dots and whitespace go first, or the search below finds a blank
     # segment after the last dot instead of the real extension.
     name = path.name[len(prefix) :].rstrip(TRAILING_NOISE)
 
-    if not path.is_file():
+    # The symlink test comes first, as is_dir would answer for the target.
+    if not path.is_symlink() and path.is_dir():
         return prefix, name, ""
 
     lowered = name.lower()
@@ -112,7 +118,9 @@ def normalize_name(path, args):
         print(f"{SCRIPT_NAME}: dry run: {path} -> {new_path}")
         return
 
-    if new_path.exists():
+    # lexists, or a broken symlink sitting on the target name would read as free
+    # and be overwritten by the rename below.
+    if os.path.lexists(new_path):
         print(f"{SCRIPT_NAME}: error: {new_path} already exists, skipping")
         return
 
@@ -139,10 +147,12 @@ def main():
     # Intermixed, so a flag is accepted anywhere among the paths.
     args = parser.parse_intermixed_args()
 
-    for missing in (path for path in args.paths if not path.exists()):
+    # lexists, so a broken symlink counts as a path of its own rather than as a
+    # missing one, and gets its name checked like any other entry.
+    for missing in (path for path in args.paths if not os.path.lexists(path)):
         print(f"{SCRIPT_NAME}: error: path does not exist: {missing}")
 
-    paths = [path for path in args.paths if path.exists()]
+    paths = [path for path in args.paths if os.path.lexists(path)]
     if not paths:
         sys.exit(1)
 

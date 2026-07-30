@@ -4,12 +4,14 @@
 The convention:
   name        [a-z0-9] words joined by "_". Accents fold to their base letter,
               every other invalid character becomes a separator.
-  extension   ASCII letters and digits only, lowercased. A suffix that needs any
-              other change is not an extension, and is normalized as part of the
-              name rather than repaired.
+  extension   ASCII letters and digits only, lowercased. Surrounding whitespace
+              is trimmed off, but a suffix that needs any other change is not an
+              extension, and is normalized as part of the name rather than
+              repaired.
 """
 import argparse
 import re
+import string
 import sys
 import unicodedata
 from pathlib import Path
@@ -31,7 +33,9 @@ COMPOUND_EXTENSIONS = (".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tar.lz")
 
 SEPARATOR = "_"
 PATTERN_INVALID_CHARACTERS = r"[^a-z0-9]+"
-PATTERN_EXTENSION = r"^[a-zA-Z0-9]+$"
+PATTERN_EXTENSION = r"[a-zA-Z0-9]+"
+# Any interleaving of trailing dots and whitespace, stripped in one pass.
+TRAILING_NOISE = string.whitespace + "."
 
 SCRIPT_NAME = Path(__file__).name
 
@@ -40,12 +44,13 @@ def split_name(path):
     """Split a name into (prefix, stem, extension).
 
     The prefix is "." for hidden entries. Directories have no extension, and a
-    suffix is only an extension if it matches PATTERN_EXTENSION.
+    suffix is only an extension if it matches PATTERN_EXTENSION once its padding
+    is trimmed.
     """
     prefix = "." if path.name.startswith(".") else ""
-    # Trailing dots go first, or the search below finds the empty segment after
-    # the last dot instead of the real extension.
-    name = path.name[len(prefix) :].rstrip(".")
+    # Trailing dots and whitespace go first, or the search below finds a blank
+    # segment after the last dot instead of the real extension.
+    name = path.name[len(prefix) :].rstrip(TRAILING_NOISE)
 
     if not path.is_file():
         return prefix, name, ""
@@ -56,12 +61,13 @@ def split_name(path):
             return prefix, name[: -len(extension)], name[-len(extension) :]
 
     stem, dot, extension = name.rpartition(".")
-    if stem and re.match(PATTERN_EXTENSION, extension):
-        return prefix, stem, dot + extension
+    candidate = extension.lstrip()
+    if stem and re.fullmatch(PATTERN_EXTENSION, candidate):
+        return prefix, stem, dot + candidate
     return prefix, name, ""
 
 
-def normalize_string(string):
+def normalize_string(text):
     """Fold accents, lowercase, and collapse each run of invalid characters into
     a single separator.
 
@@ -69,7 +75,7 @@ def normalize_string(string):
     own (Ω, ß, kanji) stays in and becomes a separator, as dropping it would
     join its neighbours instead.
     """
-    decomposed = unicodedata.normalize("NFD", string)
+    decomposed = unicodedata.normalize("NFD", text)
     unaccented = "".join(char for char in decomposed if not unicodedata.combining(char))
     normalized = re.sub(PATTERN_INVALID_CHARACTERS, SEPARATOR, unaccented.lower())
     return normalized.strip(SEPARATOR)

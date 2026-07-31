@@ -7,7 +7,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-# Renaming these breaks the tools that look them up by this exact case.
+# Tools look these up by this exact case.
 STANDARD_NAMES = {
     "CMakeLists.txt",
     "LICENSE",
@@ -18,11 +18,10 @@ STANDARD_NAMES = {
     "Makefile",
 }
 
-# A plain suffix search stops at the last dot and would leave the ".tar" behind.
+# A search from the last dot would leave the ".tar" behind.
 COMPOUND_EXTENSIONS = (".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tar.lz")
 
-# What Path.name reports for a path naming no entry of its own: "." and "..", and
-# "" for the root and for a bare ".".
+# What Path.name reports for a path that names no entry of its own.
 NAMELESS_COMPONENTS = {"", ".", ".."}
 
 SEPARATOR = "_"
@@ -32,14 +31,41 @@ TRAILING_NOISE = string.whitespace + "."
 
 SCRIPT_NAME = Path(__file__).name
 
+# Ordered by severity: the run exits with the worst one reached.
+EXIT_OK = 0
+EXIT_FINDINGS = 1
+EXIT_ERROR = 2
+
+
+class Report:
+    def __init__(self):
+        self.status = EXIT_OK
+
+    # Names on stdout, diagnostics on stderr, so the report can be piped.
+    def name(self, path):
+        print(path)
+        self.status = max(self.status, EXIT_FINDINGS)
+
+    # An announced rename leaves the name off the convention, like a reported one.
+    def planned(self, path, new_path):
+        print(f"{SCRIPT_NAME}: dry run: {path} -> {new_path}")
+        self.status = max(self.status, EXIT_FINDINGS)
+
+    def renamed(self, path, new_path):
+        print(f"{SCRIPT_NAME}: renamed: {path} -> {new_path}")
+
+    def error(self, message):
+        print(f"{SCRIPT_NAME}: error: {message}", file=sys.stderr)
+        self.status = max(self.status, EXIT_ERROR)
+
 
 def split_name(path):
     prefix = "." if path.name.startswith(".") else ""
-    # Trailing dots and whitespace go first, or the search below finds a blank
-    # segment after the last dot instead of the real extension.
+    # Stripped first, or the search below finds a blank segment after the last
+    # dot instead of the extension.
     name = path.name[len(prefix) :].rstrip(TRAILING_NOISE)
 
-    # The symlink test comes first, as is_dir would answer for the target.
+    # is_dir answers for the target, so the symlink test comes first.
     if not path.is_symlink() and path.is_dir():
         return prefix, name, ""
 
@@ -57,9 +83,8 @@ def split_name(path):
 
 def normalize_string(text):
     decomposed = unicodedata.normalize("NFD", text)
-    # Only combining marks are dropped. A character with no ASCII form of its own
-    # (Ω, ß, kanji) stays in and becomes a separator, as dropping it would join
-    # its neighbours instead.
+    # Only combining marks are dropped. A character with no ASCII form (Ω, ß,
+    # kanji) becomes a separator, as dropping it would join its neighbours.
     unaccented = "".join(char for char in decomposed if not unicodedata.combining(char))
     normalized = re.sub(PATTERN_INVALID_CHARACTERS, SEPARATOR, unaccented.lower())
     return normalized.strip(SEPARATOR)
@@ -72,51 +97,52 @@ def target_name(path):
 
 
 def is_valid_name(path):
-    # A path ending in "." or ".." holds no name to judge, and the normalizer
-    # would read the dots as a name that folds away to nothing.
+    # No name to judge, and the normalizer would fold the dots away to nothing.
     if path.name in NAMELESS_COMPONENTS:
         return True
     return path.name in STANDARD_NAMES or target_name(path) == path.name
 
 
-def normalize_name(path, args, claimed):
+def normalize_name(path, args, claimed, report):
     new_name = target_name(path)
     if not new_name:
-        print(f"{SCRIPT_NAME}: skipping (name becomes empty): {path}")
+        report.error(f"{path} normalizes to an empty name, skipping")
         return
 
     new_path = path.parent / new_name
     if new_path == path:
         return
 
-    # Both collision tests come before the dry run reports, or a run that would
-    # be refused is announced as a rename that is going to happen.
+    # Both collision tests come before the dry run report, or a refused rename is
+    # announced as one that will happen.
     #
-    # claimed catches two paths normalizing to the same name even before the
-    # first rename touches the disk. Keyed on the absolute path, or the same name
-    # reached through two spellings would count as two.
+    # claimed catches two paths normalizing to the same name before any rename
+    # reaches the disk. Keyed on the absolute path, or the same name reached
+    # through two spellings would count as two.
     if os.path.abspath(new_path) in claimed:
-        print(f"{SCRIPT_NAME}: error: {new_path} is already taken by another rename, skipping")
+        report.error(f"{new_path} is already taken by another rename, skipping")
         return
 
-    # lexists, or a broken symlink sitting on the target name would read as free
-    # and be overwritten by the rename below.
+    # lexists, or a broken symlink on the target name reads as free and gets
+    # overwritten by the rename below.
     if os.path.lexists(new_path):
-        print(f"{SCRIPT_NAME}: error: {new_path} already exists, skipping")
+        report.error(f"{new_path} already exists, skipping")
         return
 
     if args.dry_run:
-        print(f"{SCRIPT_NAME}: dry run: {path} -> {new_path}")
+        report.planned(path, new_path)
         claimed.add(os.path.abspath(new_path))
         return
 
     try:
         path.rename(new_path)
-        claimed.add(os.path.abspath(new_path))
-        if args.verbose:
-            print(f"{SCRIPT_NAME}: renamed: {path} -> {new_path}")
     except OSError as error:
-        print(f"{SCRIPT_NAME}: error renaming {path}: {error}")
+        report.error(f"cannot rename {path}: {error}")
+        return
+
+    claimed.add(os.path.abspath(new_path))
+    if args.verbose:
+        report.renamed(path, new_path)
 
 
 def main():
@@ -130,7 +156,12 @@ def main():
         "             and every other invalid character becomes a separator\n"
         "  extension  ASCII letters and digits only, lowercased; surrounding whitespace\n"
         "             is trimmed, but a suffix needing any other change is not an\n"
-        "             extension and is normalized as part of the name",
+        "             extension and is normalized as part of the name\n"
+        "\n"
+        "exit status:\n"
+        "  0  every name checked already follows the convention, or was renamed to it\n"
+        "  1  a name is off the convention and was only reported, not fixed\n"
+        "  2  a path does not exist, or a name could not be fixed",
     )
     parser.add_argument("paths", metavar="path", nargs="+", type=Path, help="file or directory to check")
     parser.add_argument(
@@ -146,20 +177,18 @@ def main():
     # Intermixed, so a flag is accepted anywhere among the paths.
     args = parser.parse_intermixed_args()
 
-    # A dry run has nothing to show unless it is a dry run of the renames.
+    # A dry run only has something to show if it is a dry run of the renames.
     args.normalize = args.normalize or args.dry_run
 
-    # lexists, so a broken symlink counts as a path of its own rather than as a
-    # missing one, and gets its name checked like any other entry.
+    report = Report()
+
+    # lexists, so a broken symlink counts as a path of its own, not a missing one.
     for missing in (path for path in args.paths if not os.path.lexists(path)):
-        print(f"{SCRIPT_NAME}: error: path does not exist: {missing}")
+        report.error(f"path does not exist: {missing}")
 
+    # Deepest first, so renaming a directory never invalidates a queued path
+    # below it.
     paths = [path for path in args.paths if os.path.lexists(path)]
-    if not paths:
-        sys.exit(1)
-
-    # Deepest first, so renaming a directory never invalidates a path still
-    # queued below it.
     paths.sort(key=lambda path: len(path.absolute().parts), reverse=True)
 
     claimed = set()
@@ -167,9 +196,11 @@ def main():
         if is_valid_name(path):
             continue
         if args.normalize:
-            normalize_name(path, args, claimed)
+            normalize_name(path, args, claimed, report)
         else:
-            print(path)
+            report.name(path)
+
+    sys.exit(report.status)
 
 
 if __name__ == "__main__":

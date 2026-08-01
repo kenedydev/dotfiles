@@ -8,20 +8,6 @@ import sys
 import unicodedata
 from pathlib import Path
 
-# Files tools look up by this exact case, so any variant folds back to it.
-STANDARD_NAMES = {
-    name.casefold(): name
-    for name in (
-        "CMakeLists.txt",
-        "LICENSE",
-        "README",
-        "README.md",
-        "Dockerfile",
-        "docker-compose.yml",
-        "Makefile",
-    )
-}
-
 # A search from the last dot would leave the ".tar" behind.
 COMPOUND_EXTENSIONS = (".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tar.lz")
 
@@ -106,11 +92,6 @@ class Entry:
     def _target_name(self):
         if self.name in NAMELESS_COMPONENTS:
             return self.name
-
-        if not self.is_directory:
-            standard = STANDARD_NAMES.get(self.name.casefold())
-            if standard:
-                return standard
 
         prefix, stem, extension = self._split_name()
         stem = self._normalize(stem)

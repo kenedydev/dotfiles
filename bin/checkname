@@ -59,92 +59,127 @@ class Report:
         self.status = max(self.status, EXIT_ERROR)
 
 
-def split_name(path):
-    prefix = "." if path.name.startswith(".") else ""
-    # Stripped first, or the search below finds a blank segment after the last
-    # dot instead of the extension.
-    name = path.name[len(prefix) :].rstrip(TRAILING_NOISE)
+class Entry:
+    def __init__(self, path):
+        if not os.path.lexists(path):
+            raise FileNotFoundError(path)
 
-    # is_dir answers for the target, so the symlink test comes first.
-    if not path.is_symlink() and path.is_dir():
+        self.path = path
+        self.name = path.name
+        self.absolute = os.path.abspath(path)
+        self.target = self._target_name()
+        self.new_path = path.parent / self.target
+        self.new_absolute = os.path.join(os.path.dirname(self.absolute), self.target)
+
+    @property
+    def depth(self):
+        return self.absolute.count(os.sep)
+
+    @property
+    def matches_convention(self):
+        return self.target == self.name
+
+    def _target_name(self):
+        if self.name in NAMELESS_COMPONENTS or self.name in STANDARD_NAMES:
+            return self.name
+
+        prefix, stem, extension = self._split_name()
+        stem = self._normalize(stem)
+        return prefix + stem + extension.lower() if stem else ""
+
+    def _split_name(self):
+        prefix = "." if self.name.startswith(".") else ""
+        name = self.name[len(prefix) :].rstrip(TRAILING_NOISE)
+
+        if not self.path.is_symlink() and self.path.is_dir():
+            return prefix, name, ""
+
+        lowered = name.lower()
+        for extension in COMPOUND_EXTENSIONS:
+            if lowered.endswith(extension) and len(lowered) > len(extension):
+                return prefix, name[: -len(extension)], name[-len(extension) :]
+
+        stem, dot, extension = name.rpartition(".")
+        candidate = extension.lstrip()
+        if stem and re.fullmatch(PATTERN_EXTENSION, candidate):
+            return prefix, stem, dot + candidate
         return prefix, name, ""
 
-    lowered = name.lower()
-    for extension in COMPOUND_EXTENSIONS:
-        if lowered.endswith(extension) and len(lowered) > len(extension):
-            return prefix, name[: -len(extension)], name[-len(extension) :]
-
-    stem, dot, extension = name.rpartition(".")
-    candidate = extension.lstrip()
-    if stem and re.fullmatch(PATTERN_EXTENSION, candidate):
-        return prefix, stem, dot + candidate
-    return prefix, name, ""
+    @staticmethod
+    def _normalize(text):
+        decomposed = unicodedata.normalize("NFD", text)
+        unaccented = "".join(char for char in decomposed if not unicodedata.combining(char))
+        normalized = re.sub(PATTERN_INVALID_CHARACTERS, SEPARATOR, unaccented.lower())
+        return normalized.strip(SEPARATOR)
 
 
-def normalize_string(text):
-    decomposed = unicodedata.normalize("NFD", text)
-    # Only combining marks are dropped. A character with no ASCII form (Ω, ß,
-    # kanji) becomes a separator, as dropping it would join its neighbours.
-    unaccented = "".join(char for char in decomposed if not unicodedata.combining(char))
-    normalized = re.sub(PATTERN_INVALID_CHARACTERS, SEPARATOR, unaccented.lower())
-    return normalized.strip(SEPARATOR)
+class Checker:
+    def __init__(self, args, report):
+        self.args = args
+        self.report = report
+        self.claimed = set()
 
+    def run(self, paths):
+        for entry in self._entries(paths):
+            if entry.matches_convention:
+                continue
+            if self.args.normalize:
+                self._normalize_name(entry)
+            else:
+                self.report.name(entry.path)
 
-def target_name(path):
-    # No name to judge, and the normalizer would fold the dots away to nothing.
-    if path.name in NAMELESS_COMPONENTS or path.name in STANDARD_NAMES:
-        return path.name
+    def _entries(self, paths):
+        entries = []
+        seen = set()
+        for path in paths:
+            try:
+                entry = Entry(path)
+            except FileNotFoundError:
+                self.report.error(f"path does not exist: {path}")
+                continue
 
-    prefix, stem, extension = split_name(path)
-    stem = normalize_string(stem)
-    return prefix + stem + extension.lower() if stem else ""
+            if entry.absolute in seen:
+                continue
+            seen.add(entry.absolute)
+            entries.append(entry)
 
+        entries.sort(key=lambda entry: entry.depth, reverse=True)
+        return entries
 
-def normalize_name(path, new_name, args, claimed, report):
-    if not new_name:
-        report.error(f"{path} normalizes to an empty name, skipping")
-        return
+    def _normalize_name(self, entry):
+        if not entry.target:
+            self.report.error(f"{entry.path} normalizes to an empty name, skipping")
+            return
 
-    new_path = path.parent / new_name
+        new_path = entry.new_path
 
-    # Both collision tests come before the dry run report, or a refused rename is
-    # announced as one that will happen.
-    #
-    # claimed catches two paths normalizing to the same name before any rename
-    # reaches the disk. Keyed on the absolute path, or the same name reached
-    # through two spellings would count as two.
-    if os.path.abspath(new_path) in claimed:
-        report.error(f"{new_path} is already taken by another rename, skipping")
-        return
+        if entry.new_absolute in self.claimed:
+            self.report.error(f"{new_path} is already taken by another rename, skipping")
+            return
 
-    # lexists, or a broken symlink on the target name reads as free and gets
-    # overwritten by the rename below.
-    if os.path.lexists(new_path):
-        report.error(f"{new_path} already exists, skipping")
-        return
+        if os.path.lexists(new_path):
+            self.report.error(f"{new_path} already exists, skipping")
+            return
 
-    if args.dry_run:
-        report.planned(path, new_path)
-        claimed.add(os.path.abspath(new_path))
-        return
+        if self.args.dry_run:
+            self.report.planned(entry.path, new_path)
+        else:
+            try:
+                entry.path.rename(new_path)
+            except OSError as error:
+                self.report.error(f"cannot rename {entry.path}: {error}")
+                return
+            if self.args.verbose:
+                self.report.renamed(entry.path, new_path)
 
-    try:
-        path.rename(new_path)
-    except OSError as error:
-        report.error(f"cannot rename {path}: {error}")
-        return
-
-    claimed.add(os.path.abspath(new_path))
-    if args.verbose:
-        report.renamed(path, new_path)
+        self.claimed.add(entry.new_absolute)
 
 
 def main():
     parser = argparse.ArgumentParser(
         prog=SCRIPT_NAME,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Report or normalize file and directory names to lowercase snake_case.\n"
-        "Without -n it only lists the names that do not match.",
+        description="Report or normalize file and directory names to lowercase snake_case.\nWithout -n it only lists the names that do not match.",
         epilog="the convention:\n"
         '  name       [a-z0-9] words joined by "_"; accents fold to their base letter\n'
         "             and every other invalid character becomes a separator\n"
@@ -158,9 +193,7 @@ def main():
         "  2  a path does not exist, or a name could not be fixed",
     )
     parser.add_argument("paths", metavar="path", nargs="+", type=Path, help="file or directory to check")
-    parser.add_argument(
-        "-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of only reporting"
-    )
+    parser.add_argument("-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of only reporting")
     parser.add_argument(
         "-d",
         "--dry-run",
@@ -168,6 +201,7 @@ def main():
         help="show the renames without applying them, including the ones a collision would block",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens")
+
     # Intermixed, so a flag is accepted anywhere among the paths.
     args = parser.parse_intermixed_args()
 
@@ -175,30 +209,7 @@ def main():
     args.normalize = args.normalize or args.dry_run
 
     report = Report()
-
-    paths = []
-    for path in args.paths:
-        # lexists, so a broken symlink counts as a path of its own, not a
-        # missing one.
-        if os.path.lexists(path):
-            paths.append(path)
-        else:
-            report.error(f"path does not exist: {path}")
-
-    # Deepest first, so renaming a directory never invalidates a queued path
-    # below it.
-    paths.sort(key=lambda path: len(path.absolute().parts), reverse=True)
-
-    claimed = set()
-    for path in paths:
-        new_name = target_name(path)
-        if new_name == path.name:
-            continue
-        if args.normalize:
-            normalize_name(path, new_name, args, claimed, report)
-        else:
-            report.name(path)
-
+    Checker(args, report).run(args.paths)
     sys.exit(report.status)
 
 

@@ -88,11 +88,12 @@ class Entry:
 
         self.path = path
         self.name = path.name
-        self.absolute = os.path.abspath(path)
+        self.directory = os.path.realpath(path.parent)
+        self.absolute = os.path.join(self.directory, self.name)
         self.is_directory = stat.S_ISDIR(status.st_mode)
         self.target = self._target_name()
         self.new_path = path.parent / self.target
-        self.new_absolute = os.path.join(os.path.dirname(self.absolute), self.target)
+        self.new_absolute = os.path.join(self.directory, self.target)
 
     @property
     def depth(self):

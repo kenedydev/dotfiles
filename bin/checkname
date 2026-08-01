@@ -65,10 +65,7 @@ class Report:
 
 class Entry:
     def __init__(self, path):
-        try:
-            status = os.lstat(path)
-        except OSError:
-            raise FileNotFoundError(path)
+        status = os.lstat(path)
 
         self.path = path
         self.name = path.name
@@ -146,8 +143,8 @@ class Checker:
         for path in paths:
             try:
                 entry = Entry(path)
-            except FileNotFoundError:
-                self.report.error(f"path does not exist: {path}")
+            except OSError as error:
+                self.report.error(f"cannot check {path}: {error.strerror.lower()}")
                 continue
 
             if entry.absolute in seen:
@@ -202,7 +199,7 @@ def main():
         "exit status:\n"
         "  0  every name checked already follows the convention, or was renamed to it\n"
         "  1  a name is off the convention and was only reported, not fixed\n"
-        "  2  a path does not exist, or a name could not be fixed",
+        "  2  a path could not be read, or a name could not be fixed",
     )
     parser.add_argument("paths", metavar="path", nargs="+", type=Path, help="file or directory to check")
     parser.add_argument("-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of only reporting")

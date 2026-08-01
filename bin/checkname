@@ -31,6 +31,7 @@ NAMELESS_COMPONENTS = {"", ".", ".."}
 SEPARATOR = "_"
 PATTERN_INVALID_CHARACTERS = r"[^a-z0-9]+"
 PATTERN_EXTENSION = r"[a-zA-Z0-9]+"
+PATTERN_CONTROL_CHARACTERS = r"[\x00-\x1f\x7f-\x9f]"
 TRAILING_NOISE = string.whitespace + "."
 
 SCRIPT_NAME = Path(__file__).name
@@ -41,25 +42,35 @@ EXIT_FINDINGS = 1
 EXIT_ERROR = 2
 
 
+def escape(text):
+    return re.sub(PATTERN_CONTROL_CHARACTERS, lambda match: repr(match.group())[1:-1], str(text))
+
+
 class Report:
-    def __init__(self):
+    def __init__(self, zero=False):
         self.status = EXIT_OK
+        self.zero = zero
 
     # Names on stdout, diagnostics on stderr, so the report can be piped.
     def name(self, path):
-        print(path)
+        # A NUL-delimited name is the only one that can be fed back as an
+        # argument unambiguously, so it is the only one left unescaped.
+        if self.zero:
+            sys.stdout.write(f"{path}\0")
+        else:
+            print(escape(path))
         self.status = max(self.status, EXIT_FINDINGS)
 
     # An announced rename leaves the name off the convention, like a reported one.
     def planned(self, path, new_path):
-        print(f"{SCRIPT_NAME}: dry run: {path} -> {new_path}")
+        print(f"{SCRIPT_NAME}: dry run: {escape(path)} -> {escape(new_path)}")
         self.status = max(self.status, EXIT_FINDINGS)
 
     def renamed(self, path, new_path):
-        print(f"{SCRIPT_NAME}: renamed: {path} -> {new_path}")
+        print(f"{SCRIPT_NAME}: renamed: {escape(path)} -> {escape(new_path)}")
 
     def error(self, message):
-        print(f"{SCRIPT_NAME}: error: {message}", file=sys.stderr)
+        print(f"{SCRIPT_NAME}: error: {escape(message)}", file=sys.stderr)
         self.status = max(self.status, EXIT_ERROR)
 
 
@@ -196,6 +207,11 @@ def main():
         "             is trimmed, but a suffix needing any other change is not an\n"
         "             extension and is normalized as part of the name\n"
         "\n"
+        "output:\n"
+        "  the reported names go to stdout and every diagnostic to stderr, so the\n"
+        "  list can be piped; a control character in a name is escaped unless -z\n"
+        "  asks for the raw name\n"
+        "\n"
         "exit status:\n"
         "  0  every name checked already follows the convention, or was renamed to it\n"
         "  1  a name is off the convention and was only reported, not fixed\n"
@@ -210,6 +226,7 @@ def main():
         help="show the renames without applying them",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens")
+    parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0")
 
     # Intermixed, so a flag is accepted anywhere among the paths.
     args = parser.parse_intermixed_args()
@@ -217,7 +234,7 @@ def main():
     # A dry run only has something to show if it is a dry run of the renames.
     args.normalize = args.normalize or args.dry_run
 
-    report = Report()
+    report = Report(args.zero)
     Checker(args, report).run(args.paths)
     sys.exit(report.status)
 

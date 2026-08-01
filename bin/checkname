@@ -176,13 +176,17 @@ def main():
 
     report = Report()
 
-    # lexists, so a broken symlink counts as a path of its own, not a missing one.
-    for missing in (path for path in args.paths if not os.path.lexists(path)):
-        report.error(f"path does not exist: {missing}")
+    paths = []
+    for path in args.paths:
+        # lexists, so a broken symlink counts as a path of its own, not a
+        # missing one.
+        if os.path.lexists(path):
+            paths.append(path)
+        else:
+            report.error(f"path does not exist: {path}")
 
     # Deepest first, so renaming a directory never invalidates a queued path
     # below it.
-    paths = [path for path in args.paths if os.path.lexists(path)]
     paths.sort(key=lambda path: len(path.absolute().parts), reverse=True)
 
     claimed = set()

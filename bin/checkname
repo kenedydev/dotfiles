@@ -91,27 +91,21 @@ def normalize_string(text):
 
 
 def target_name(path):
+    # No name to judge, and the normalizer would fold the dots away to nothing.
+    if path.name in NAMELESS_COMPONENTS or path.name in STANDARD_NAMES:
+        return path.name
+
     prefix, stem, extension = split_name(path)
     stem = normalize_string(stem)
     return prefix + stem + extension.lower() if stem else ""
 
 
-def is_valid_name(path):
-    # No name to judge, and the normalizer would fold the dots away to nothing.
-    if path.name in NAMELESS_COMPONENTS:
-        return True
-    return path.name in STANDARD_NAMES or target_name(path) == path.name
-
-
-def normalize_name(path, args, claimed, report):
-    new_name = target_name(path)
+def normalize_name(path, new_name, args, claimed, report):
     if not new_name:
         report.error(f"{path} normalizes to an empty name, skipping")
         return
 
     new_path = path.parent / new_name
-    if new_path == path:
-        return
 
     # Both collision tests come before the dry run report, or a refused rename is
     # announced as one that will happen.
@@ -193,10 +187,11 @@ def main():
 
     claimed = set()
     for path in paths:
-        if is_valid_name(path):
+        new_name = target_name(path)
+        if new_name == path.name:
             continue
         if args.normalize:
-            normalize_name(path, args, claimed, report)
+            normalize_name(path, new_name, args, claimed, report)
         else:
             report.name(path)
 

@@ -198,6 +198,7 @@ class Checker:
 def main():
     parser = argparse.ArgumentParser(
         prog=SCRIPT_NAME,
+        usage=f"{SCRIPT_NAME} path [path ...]\n       {SCRIPT_NAME} [-n] [-d] [-v] [-z] -- path [path ...]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Report or normalize file and directory names to lowercase snake_case.\nWithout -n it only lists the names that do not match.",
         epilog="the convention:\n"
@@ -211,6 +212,11 @@ def main():
         "  the reported names go to stdout and every diagnostic to stderr, so the\n"
         "  list can be piped; a control character in a name is escaped unless -z\n"
         "  asks for the raw name\n"
+        "\n"
+        "arguments:\n"
+        '  without a "--" every argument is a path, so a name a glob turns into an\n'
+        "  option is still checked as a name; the options are only read when a\n"
+        '  "--" separates them from the paths, as in "' + SCRIPT_NAME + ' -n -- *"\n'
         "\n"
         "exit status:\n"
         "  0  every name checked already follows the convention, or was renamed to it\n"
@@ -228,8 +234,14 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens")
     parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0")
 
-    # Intermixed, so a flag is accepted anywhere among the paths.
-    args = parser.parse_intermixed_args()
+    arguments = sys.argv[1:]
+
+    # Only a "--" opens the options, so a name a glob turned into a flag stays
+    # a name and the directory being checked cannot ask for a rename.
+    if "--" not in arguments and arguments not in (["-h"], ["--help"]):
+        arguments = ["--"] + arguments
+
+    args = parser.parse_args(arguments)
 
     # A dry run only has something to show if it is a dry run of the renames.
     args.normalize = args.normalize or args.dry_run

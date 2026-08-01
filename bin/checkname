@@ -2,6 +2,7 @@
 import argparse
 import os
 import re
+import stat
 import string
 import sys
 import unicodedata
@@ -64,13 +65,15 @@ class Report:
 
 class Entry:
     def __init__(self, path):
-        if not os.path.lexists(path):
+        try:
+            status = os.lstat(path)
+        except OSError:
             raise FileNotFoundError(path)
 
         self.path = path
         self.name = path.name
         self.absolute = os.path.abspath(path)
-        self.is_directory = not path.is_symlink() and path.is_dir()
+        self.is_directory = stat.S_ISDIR(status.st_mode)
         self.target = self._target_name()
         self.new_path = path.parent / self.target
         self.new_absolute = os.path.join(os.path.dirname(self.absolute), self.target)

@@ -157,17 +157,17 @@ class Checker:
 
     def _normalize_name(self, entry):
         if not entry.target:
-            self.report.error(f"{entry.path} normalizes to an empty name, skipping")
+            self.report.error(f"cannot rename {entry.path}: it normalizes to an empty name")
             return
 
         new_path = entry.new_path
 
         if entry.new_absolute in self.claimed:
-            self.report.error(f"{new_path} is already taken by another rename, skipping")
+            self.report.error(f"cannot rename {entry.path} to {new_path}: another rename already claimed that name")
             return
 
         if os.path.lexists(new_path):
-            self.report.error(f"{new_path} already exists, skipping")
+            self.report.error(f"cannot rename {entry.path} to {new_path}: it already exists")
             return
 
         if self.args.dry_run:
@@ -207,7 +207,7 @@ def main():
         "-d",
         "--dry-run",
         action="store_true",
-        help="show the renames without applying them, including the ones a collision would block",
+        help="show the renames without applying them",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens")
 

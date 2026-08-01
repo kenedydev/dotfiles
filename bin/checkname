@@ -127,7 +127,7 @@ class Entry:
 
     @staticmethod
     def _normalize(text):
-        decomposed = unicodedata.normalize("NFD", text)
+        decomposed = unicodedata.normalize("NFKD", text)
         unaccented = "".join(char for char in decomposed if not unicodedata.combining(char))
         normalized = re.sub(PATTERN_INVALID_CHARACTERS, SEPARATOR, unaccented.lower())
         return normalized.strip(SEPARATOR)

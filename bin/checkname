@@ -7,15 +7,18 @@ import sys
 import unicodedata
 from pathlib import Path
 
-# Tools look these up by this exact case.
+# Files tools look up by this exact case, so any variant folds back to it.
 STANDARD_NAMES = {
-    "CMakeLists.txt",
-    "LICENSE",
-    "README",
-    "README.md",
-    "Dockerfile",
-    "docker-compose.yml",
-    "Makefile",
+    name.casefold(): name
+    for name in (
+        "CMakeLists.txt",
+        "LICENSE",
+        "README",
+        "README.md",
+        "Dockerfile",
+        "docker-compose.yml",
+        "Makefile",
+    )
 }
 
 # A search from the last dot would leave the ".tar" behind.
@@ -67,6 +70,7 @@ class Entry:
         self.path = path
         self.name = path.name
         self.absolute = os.path.abspath(path)
+        self.is_directory = not path.is_symlink() and path.is_dir()
         self.target = self._target_name()
         self.new_path = path.parent / self.target
         self.new_absolute = os.path.join(os.path.dirname(self.absolute), self.target)
@@ -80,8 +84,13 @@ class Entry:
         return self.target == self.name
 
     def _target_name(self):
-        if self.name in NAMELESS_COMPONENTS or self.name in STANDARD_NAMES:
+        if self.name in NAMELESS_COMPONENTS:
             return self.name
+
+        if not self.is_directory:
+            standard = STANDARD_NAMES.get(self.name.casefold())
+            if standard:
+                return standard
 
         prefix, stem, extension = self._split_name()
         stem = self._normalize(stem)
@@ -91,7 +100,7 @@ class Entry:
         prefix = "." if self.name.startswith(".") else ""
         name = self.name[len(prefix) :].rstrip(TRAILING_NOISE)
 
-        if not self.path.is_symlink() and self.path.is_dir():
+        if self.is_directory:
             return prefix, name, ""
 
         lowered = name.lower()

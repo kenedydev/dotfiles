@@ -68,7 +68,8 @@ class Report:
         self.status = max(self.status, EXIT_FINDINGS)
 
     def renamed(self, path, new_path):
-        self._write(sys.stdout, _sentence("renamed", path, new_path))
+        text = _delimited(path, new_path) if self.zero else _sentence("renamed", path, new_path)
+        self._write(sys.stdout, text)
 
     def error(self, message):
         self._write(sys.stderr, f"{SCRIPT_NAME}: error: {escape(message)}\n")
@@ -284,7 +285,7 @@ def main():
         parser.add_argument("-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of reporting; silent unless -v"),
         parser.add_argument("-d", "--dry-run", action="store_true", help="show the renames without applying them; implies -n"),
         parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens; a dry run shows them anyway"),
-        parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0; a dry run reports the old name then the new one"),
+        parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0; a rename, applied or planned, reports the old name then the new one"),
     ]
 
     args = parser.parse_args(command_line(sys.argv[1:], options))

@@ -43,6 +43,10 @@ def _delimited(*paths):
     return b"".join(os.fsencode(path) + b"\0" for path in paths)
 
 
+def _reason(error):
+    return (error.strerror or str(error)).lower()
+
+
 def _sentence(label, path, new_path):
     return f"{SCRIPT_NAME}: {label}: {escape(path)} -> {escape(new_path)}\n"
 
@@ -160,7 +164,7 @@ class Checker:
             try:
                 entry = Entry(path)
             except OSError as error:
-                self.report.error(f"cannot check {path}: {error.strerror.lower()}")
+                self.report.error(f"cannot check {path}: {_reason(error)}")
                 continue
 
             if entry.absolute in seen:
@@ -192,7 +196,7 @@ class Checker:
             try:
                 entry.path.rename(new_path)
             except OSError as error:
-                self.report.error(f"cannot rename {entry.path}: {error}")
+                self.report.error(f"cannot rename {entry.path} to {new_path}: {_reason(error)}")
                 return
             if self.args.verbose:
                 self.report.renamed(entry.path, new_path)

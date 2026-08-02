@@ -127,3 +127,20 @@ cryptfiles mirror [commit]           # default: simulate
 `mirror` opens both volumes, mirrors `main` onto `backup` with `rsync --delete` (excluding `.snapshots`) and then snapshots both. Without the `commit` argument it only simulates the run. Nothing is snapshotted when the mirror changed nothing, and an empty `main` is never synced onto `backup`.
 
 Snapshots are named `cryptfiles_YYYYMMDD_HHMMSS_EPOCH`. After each one the last 7 are always kept, plus one per day for 7 days and one per week for 7 weeks.
+
+---
+
+## File names (`bin/checkname`)
+
+`checkname` reports, or renames, file and directory names that are off the lowercase snake_case convention. Only the paths given are checked, never what a directory holds.
+
+**Requires:** Python ≥ 3.9. Runs as your own user and touches nothing outside the paths given.
+
+### Setup
+
+Symlink it into a directory on your `PATH`, then run `checkname --help` for the convention, the options and the exit status:
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf ~/dotfiles/bin/checkname ~/.local/bin/checkname
+```

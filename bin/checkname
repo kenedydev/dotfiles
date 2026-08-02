@@ -191,6 +191,10 @@ class Checker:
         self.claimed.add(entry.new_absolute)
 
 
+def _writable(stream):
+    return stream if stream is not None else open(os.devnull, "w")
+
+
 def _discard_unwritable(stream):
     try:
         stream.flush()
@@ -224,6 +228,8 @@ def command_line(arguments, options):
 
 
 def main():
+    sys.stdout = _writable(sys.stdout)
+    sys.stderr = _writable(sys.stderr)
     sys.stdout.reconfigure(errors="backslashreplace")
     sys.stderr.reconfigure(errors="backslashreplace")
 

@@ -185,6 +185,31 @@ class Checker:
         self.claimed.add(entry.new_absolute)
 
 
+def _is_option(argument, names, letters):
+    if argument.startswith("--"):
+        return len(argument) > 2 and any(name.startswith(argument) for name in names)
+    return len(argument) > 1 and argument.startswith("-") and set(argument[1:]) <= letters
+
+
+# Only a known option opens the line, and only a "--" closes it, so a name a
+# glob turned into a flag stays a name and the directory being checked cannot
+# ask for a rename.
+def command_line(arguments, options):
+    if arguments in (["-h"], ["--help"]):
+        return arguments
+
+    names = {name for action in options for name in action.option_strings}
+    letters = {name[1:] for name in names if not name.startswith("--")}
+
+    index = 0
+    while index < len(arguments) and _is_option(arguments[index], names, letters):
+        index += 1
+
+    if index < len(arguments) and arguments[index] == "--":
+        return arguments
+    return ["--"] + arguments
+
+
 def main():
     sys.stdout.reconfigure(errors="backslashreplace")
     sys.stderr.reconfigure(errors="backslashreplace")
@@ -207,9 +232,10 @@ def main():
         "  is escaped in a reported name unless -z asks for the raw bytes\n"
         "\n"
         "arguments:\n"
-        '  without a "--" every argument is a path, so a name a glob turns into an\n'
-        "  option is still checked as a name; the options are only read when a\n"
-        '  "--" separates them from the paths, as in "' + SCRIPT_NAME + ' -n -- *"\n'
+        '  a known option is only read when it opens the command line and a "--"\n'
+        '  closes the options, as in "' + SCRIPT_NAME + ' -n -- *"; every other argument\n'
+        '  is a path, so a name a glob turns into an unknown option, or into a\n'
+        '  later "--", is still checked as a name\n'
         "\n"
         "exit status:\n"
         "  0  every name checked already follows the convention, or was renamed to it\n"
@@ -217,24 +243,14 @@ def main():
         "  2  a path could not be read, or a name could not be fixed",
     )
     parser.add_argument("paths", metavar="path", nargs="+", type=Path, help="file or directory to check")
-    parser.add_argument("-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of only reporting")
-    parser.add_argument(
-        "-d",
-        "--dry-run",
-        action="store_true",
-        help="show the renames without applying them",
-    )
-    parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens")
-    parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0")
+    options = [
+        parser.add_argument("-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of only reporting"),
+        parser.add_argument("-d", "--dry-run", action="store_true", help="show the renames without applying them"),
+        parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens"),
+        parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0"),
+    ]
 
-    arguments = sys.argv[1:]
-
-    # Only a "--" opens the options, so a name a glob turned into a flag stays
-    # a name and the directory being checked cannot ask for a rename.
-    if "--" not in arguments and arguments not in (["-h"], ["--help"]):
-        arguments = ["--"] + arguments
-
-    args = parser.parse_args(arguments)
+    args = parser.parse_args(command_line(sys.argv[1:], options))
 
     # A dry run only has something to show if it is a dry run of the renames.
     args.normalize = args.normalize or args.dry_run

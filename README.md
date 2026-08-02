@@ -44,24 +44,23 @@ Then open `nvim`. On the first run, lazy.nvim clones itself and installs the plu
 
 ## Root snapshots (`rootsnap/`)
 
-`rootsnap` backs up the EFI partition and then takes a read-only Btrfs snapshot of the root subvolume. Retention keeps the last 7 snapshots, plus one per day for 7 days and one per week for 7 weeks. Only the root subvolume is snapshotted, so nested subvolumes (e.g. `/home`) are not included.
+`rootsnap` backs up the EFI partition and then takes a read-only Btrfs snapshot of the root subvolume, pruning the older ones. Only the root subvolume is snapshotted, so nested subvolumes (e.g. `/home`) are not included. Snapshots are created under `/.snapshots`; the EFI backup is mirrored to `/efi_backup` so it is captured inside each snapshot. Retention keeps the last 7 snapshots, plus one per day for 7 days and one per week for 7 weeks.
 
-**Requires:** a Btrfs root, an ESP mounted at `/efi`, a subvolume mounted at `/.snapshots`, and `rsync` + `btrfs-progs`. Must run as root. Snapshots are created under `/.snapshots`; the EFI backup is mirrored to `/efi_backup` so it is captured inside each snapshot.
+**Requires:** a Btrfs root, an ESP mounted at `/efi`, a subvolume mounted at `/.snapshots`, and `rsync` + `btrfs-progs` + `util-linux`. Must run as root.
 
 ### Setup
 
-Install it to a system path, then run it whenever you want a snapshot:
+Install it to a system path, then run `sudo rootsnap --help`:
 
 ```bash
 sudo install -Dm755 ~/dotfiles/rootsnap/rootsnap /usr/local/bin/rootsnap
-sudo rootsnap -n <name>   # <name> is an optional label, e.g. "manual"
 ```
 
 It is copied rather than symlinked because it installs to a root-owned system path and may run before a home directory is mounted, where a symlink into `~` could dangle. Re-run the install command after editing the script.
 
 ### Automatic triggers
 
-These two files trigger a snapshot automatically.
+These two files trigger a snapshot automatically. A trigger firing less than a minute after the previous snapshot is skipped, so a boot followed by a pacman transaction takes one snapshot, not two.
 
 | File               | Installed to                           | Triggers a snapshot             |
 | ------------------ | -------------------------------------- | ------------------------------- |

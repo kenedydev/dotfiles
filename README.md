@@ -1,6 +1,6 @@
 # dotfiles
 
-Personal configuration files, scripts, and system resources for my Arch Linux setup. Each top-level directory groups the files for one tool or concern, and the repo is the single source of truth. See each section below for how to install its files.
+Personal configuration files and scripts.
 
 Clone it wherever you like; the commands below assume `~/dotfiles`:
 
@@ -14,14 +14,14 @@ git clone https://github.com/kenedydev/dotfiles.git ~/dotfiles
 
 A minimal, single-file Neovim config aimed at quick edits in the terminal, with fast startup and few moving parts. [lazy.nvim][lazy] is bootstrapped automatically on the first launch, so there is nothing to install by hand.
 
+Plugins: [tokyodark][tokyodark] (theme), [fzf-lua][fzf] (fuzzy finder), [lualine][lualine] (statusline), [snacks][snacks] (QoL) and [which-key][whichkey] (keymap hints). Leader is `<Space>`.
+
 **Requires:** Neovim ≥ 0.11
 
 | File             | Installed to                    | Purpose                                      |
 | ---------------- | ------------------------------- | -------------------------------------------- |
 | `init.lua`       | `~/.config/nvim/init.lua`       | Settings, keymaps and plugin specs           |
 | `lazy-lock.json` | `~/.config/nvim/lazy-lock.json` | Pinned plugin versions (reproducible builds) |
-
-Plugins: [tokyodark][tokyodark] (theme), [fzf-lua][fzf] (fuzzy finder), [lualine][lualine] (statusline), [snacks][snacks] (QoL) and [which-key][whichkey] (keymap hints). Leader is `<Space>`.
 
 ### Setup
 

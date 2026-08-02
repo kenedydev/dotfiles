@@ -39,6 +39,14 @@ def _escaped_character(match):
     return repr(character)[1:-1]
 
 
+def _delimited(*paths):
+    return b"".join(os.fsencode(path) + b"\0" for path in paths)
+
+
+def _sentence(label, path, new_path):
+    return f"{SCRIPT_NAME}: {label}: {escape(path)} -> {escape(new_path)}\n"
+
+
 class Report:
     def __init__(self, zero=False):
         self.status = EXIT_OK
@@ -46,16 +54,17 @@ class Report:
         self.closed = set()
 
     def name(self, path):
-        text = os.fsencode(path) + b"\0" if self.zero else escape(path) + "\n"
+        text = _delimited(path) if self.zero else escape(path) + "\n"
         self._write(sys.stdout, text)
         self.status = max(self.status, EXIT_FINDINGS)
 
     def planned(self, path, new_path):
-        self._write(sys.stdout, f"{SCRIPT_NAME}: dry run: {escape(path)} -> {escape(new_path)}\n")
+        text = _delimited(path, new_path) if self.zero else _sentence("dry run", path, new_path)
+        self._write(sys.stdout, text)
         self.status = max(self.status, EXIT_FINDINGS)
 
     def renamed(self, path, new_path):
-        self._write(sys.stdout, f"{SCRIPT_NAME}: renamed: {escape(path)} -> {escape(new_path)}\n")
+        self._write(sys.stdout, _sentence("renamed", path, new_path))
 
     def error(self, message):
         self._write(sys.stderr, f"{SCRIPT_NAME}: error: {escape(message)}\n")
@@ -266,7 +275,7 @@ def main():
         parser.add_argument("-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of only reporting"),
         parser.add_argument("-d", "--dry-run", action="store_true", help="show the renames without applying them"),
         parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens"),
-        parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0"),
+        parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0; a dry run reports the old name and the new one"),
     ]
 
     args = parser.parse_args(command_line(sys.argv[1:], options))

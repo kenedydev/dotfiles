@@ -63,7 +63,7 @@ class Report:
         self.status = max(self.status, EXIT_FINDINGS)
 
     def planned(self, path, new_path):
-        text = _delimited(path, new_path) if self.zero else _sentence("dry run", path, new_path)
+        text = _delimited(path, new_path) if self.zero else _sentence("would rename", path, new_path)
         self._write(sys.stdout, text)
         self.status = max(self.status, EXIT_FINDINGS)
 

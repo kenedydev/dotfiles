@@ -91,7 +91,7 @@ sudo systemctl enable rootsnap.service
 
 ### Setup
 
-Symlink it into a directory on your `PATH`:
+Symlink it into a directory on your `PATH`, then run `cryptfiles --help`:
 
 ```bash
 mkdir -p ~/.local/bin
@@ -112,20 +112,6 @@ export CRYPTFILES_MAIN_UUID=$(sudo blkid -s UUID -o value /dev/nvme0n1p1)
 ```
 
 The device path is derived from the UUID at each run, and a mapper backed by any other block is refused.
-
-### Usage
-
-```bash
-cryptfiles open [main|backup|all]    # default: main
-cryptfiles close [main|backup|all]   # default: all
-cryptfiles mirror [commit]           # default: simulate
-```
-
-`open` unlocks the LUKS block and mounts both subvolumes, `close` unmounts them and locks the block again. An already mounted volume is completed rather than reopened, so an interrupted run leaving `@files` mounted without `@snapshots` is fixed by opening it again.
-
-`mirror` opens both volumes, mirrors `main` onto `backup` with `rsync --delete` (excluding `.snapshots`) and then snapshots both. Without the `commit` argument it only simulates the run. Nothing is snapshotted when the mirror changed nothing, and an empty `main` is never synced onto `backup`.
-
-Snapshots are named `cryptfiles_YYYYMMDD_HHMMSS_EPOCH`. After each one the last 7 are always kept, plus one per day for 7 days and one per week for 7 weeks.
 
 ---
 

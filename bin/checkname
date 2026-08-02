@@ -246,24 +246,29 @@ def main():
         prog=SCRIPT_NAME,
         usage=f"{SCRIPT_NAME} path [path ...]\n       {SCRIPT_NAME} [-n] [-d] [-v] [-z] -- path [path ...]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Report or normalize file and directory names to lowercase snake_case.\nWithout -n it only lists the names that do not match.",
+        description="Report or normalize file and directory names to lowercase snake_case.\nOnly the paths given are checked, never what a directory holds.",
         epilog="the convention:\n"
-        '  name       [a-z0-9] words joined by "_"; accents fold to their base letter\n'
-        "             and every other invalid character becomes a separator\n"
-        "  extension  ASCII letters and digits only, lowercased; surrounding whitespace\n"
-        "             is trimmed, but a suffix needing any other change is not an\n"
-        "             extension and is normalized as part of the name\n"
-        "\n"
-        "output:\n"
-        "  the reported names go to stdout and every diagnostic to stderr, so the\n"
-        "  list can be piped; a control character or a byte that is not valid UTF-8\n"
-        "  is escaped in a reported name unless -z asks for the raw bytes\n"
+        '  name       [a-z0-9] words joined by "_"; an accent folds to its base\n'
+        "             letter, a compatibility form to its plain characters, and\n"
+        "             every other invalid character to a separator; a leading dot\n"
+        "             is kept, and trailing dots and whitespace are dropped\n"
+        "  extension  ASCII letters and digits only, lowercased; surrounding\n"
+        "             whitespace is trimmed, but a suffix needing any other change\n"
+        '             is not an extension and is normalized into the name; ".tar.gz"\n'
+        "             and its kin stay whole, and a directory has no extension\n"
         "\n"
         "arguments:\n"
-        '  a known option is only read when it opens the command line and a "--"\n'
-        '  closes the options, as in "' + SCRIPT_NAME + ' -n -- *"; every other argument\n'
-        '  is a path, so a name a glob turns into an unknown option, or into a\n'
-        '  later "--", is still checked as a name\n'
+        '  an option is read only while it opens the command line, and a "--" closes\n'
+        '  the options, as in "' + SCRIPT_NAME + ' -n -- *"; every other argument is a path,\n'
+        '  so a name a glob turned into a flag, or into a later "--", is still a name\n'
+        "\n"
+        "  a path given twice is checked once, and the deepest comes first, so a\n"
+        "  child is renamed before the parent whose name still leads to it\n"
+        "\n"
+        "output:\n"
+        "  the report goes to stdout and every error to stderr, so stdout can be\n"
+        "  piped in any mode; a control character or a byte that is not valid UTF-8\n"
+        "  is escaped in a reported name, unless -z asks for the raw bytes\n"
         "\n"
         "exit status:\n"
         "  0  every name checked already follows the convention, or was renamed to it\n"
@@ -272,10 +277,10 @@ def main():
     )
     parser.add_argument("paths", metavar="path", nargs="+", type=Path, help="file or directory to check")
     options = [
-        parser.add_argument("-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of only reporting"),
-        parser.add_argument("-d", "--dry-run", action="store_true", help="show the renames without applying them"),
-        parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens"),
-        parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0; a dry run reports the old name and the new one"),
+        parser.add_argument("-n", "--normalize-name", dest="normalize", action="store_true", help="rename instead of reporting; silent unless -v"),
+        parser.add_argument("-d", "--dry-run", action="store_true", help="show the renames without applying them; implies -n"),
+        parser.add_argument("-v", "--verbose", action="store_true", help="print each rename as it happens; a dry run shows them anyway"),
+        parser.add_argument("-z", "--zero", action="store_true", help="end each reported name with a NUL instead of a newline, for xargs -0; a dry run reports the old name then the new one"),
     ]
 
     args = parser.parse_args(command_line(sys.argv[1:], options))

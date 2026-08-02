@@ -43,29 +43,35 @@ class Report:
     def __init__(self, zero=False):
         self.status = EXIT_OK
         self.zero = zero
+        self.closed = set()
 
-    # Names on stdout, diagnostics on stderr, so the report can be piped.
     def name(self, path):
-        # A NUL-delimited name is the only one that can be fed back as an
-        # argument unambiguously, so it is the only one left unescaped.
-        if self.zero:
-            sys.stdout.flush()
-            sys.stdout.buffer.write(os.fsencode(path) + b"\0")
-        else:
-            print(escape(path))
+        text = os.fsencode(path) + b"\0" if self.zero else escape(path) + "\n"
+        self._write(sys.stdout, text)
         self.status = max(self.status, EXIT_FINDINGS)
 
-    # An announced rename leaves the name off the convention, like a reported one.
     def planned(self, path, new_path):
-        print(f"{SCRIPT_NAME}: dry run: {escape(path)} -> {escape(new_path)}")
+        self._write(sys.stdout, f"{SCRIPT_NAME}: dry run: {escape(path)} -> {escape(new_path)}\n")
         self.status = max(self.status, EXIT_FINDINGS)
 
     def renamed(self, path, new_path):
-        print(f"{SCRIPT_NAME}: renamed: {escape(path)} -> {escape(new_path)}")
+        self._write(sys.stdout, f"{SCRIPT_NAME}: renamed: {escape(path)} -> {escape(new_path)}\n")
 
     def error(self, message):
-        print(f"{SCRIPT_NAME}: error: {escape(message)}", file=sys.stderr)
+        self._write(sys.stderr, f"{SCRIPT_NAME}: error: {escape(message)}\n")
         self.status = max(self.status, EXIT_ERROR)
+
+    def _write(self, stream, text):
+        if stream in self.closed:
+            return
+        try:
+            if isinstance(text, bytes):
+                stream.flush()
+                stream.buffer.write(text)
+            else:
+                stream.write(text)
+        except BrokenPipeError:
+            self.closed.add(stream)
 
 
 class Entry:
@@ -185,6 +191,13 @@ class Checker:
         self.claimed.add(entry.new_absolute)
 
 
+def _discard_unwritable(stream):
+    try:
+        stream.flush()
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), stream.fileno())
+
+
 def _is_option(argument, names, letters):
     if argument.startswith("--"):
         return len(argument) > 2 and any(name.startswith(argument) for name in names)
@@ -257,6 +270,9 @@ def main():
 
     report = Report(args.zero)
     Checker(args, report).run(args.paths)
+
+    _discard_unwritable(sys.stdout)
+    _discard_unwritable(sys.stderr)
     sys.exit(report.status)
 
 

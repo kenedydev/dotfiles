@@ -10,6 +10,26 @@ git clone https://github.com/kenedydev/dotfiles.git ~/dotfiles
 
 ---
 
+## Zsh (`zsh/`)
+
+A single-file interactive shell config.
+
+**Requires:** Zsh ≥ 5.7 for the truecolor prompt, and a Nerd Font. Optional: `zsh-autosuggestions`, `zsh-syntax-highlighting` and `zoxide`, each used only when installed.
+
+| File     | Installed to | Purpose               |
+| -------- | ------------ | --------------------- |
+| `.zshrc` | `~/.zshrc`   | The whole shell setup |
+
+### Setup
+
+```bash
+ln -sf ~/dotfiles/zsh/.zshrc ~/.zshrc
+```
+
+Whatever is private or particular to one machine goes in `~/.zshrc.local`, ordinary shell sourced at the end when it exists.
+
+---
+
 ## Neovim (`nvim/`)
 
 A minimal, single-file Neovim config aimed at quick edits in the terminal, with fast startup and few moving parts. [lazy.nvim][lazy] is bootstrapped automatically on the first launch, so there is nothing to install by hand.

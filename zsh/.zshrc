@@ -39,7 +39,7 @@ zstyle ':vcs_info:*' enable git
 zstyle ':vcs_info:git:*' formats '%b'
 zstyle ':vcs_info:git:*' actionformats '%b|%a'
 
-typeset -g _pg_arch=$'\U000f08c7'
+typeset -g _pg_cat=$'\U0000eeed'
 typeset -g _pg_dir=$'\uf07c'
 typeset -g _pg_git=$'\uf418'
 typeset -g _pg_ret=$'\U000f0311'
@@ -56,7 +56,7 @@ fi
 typeset -g _ps_marker='%F{#39ff14}❯%F{#22990c}▁%f '
 
 typeset -g _prompt_full='
-%F{#1793d1}${_pg_arch}%f %F{#ff0077}%n%f${_ps_host}   %F{#ffffff}${_pg_dir} %~%f${_ps_git}${_ps_ret}
+%F{#ff007f}${_pg_cat} %n%f${_ps_host}   %F{#ffffff}${_pg_dir} %~%f${_ps_git}${_ps_ret}
 '"${_ps_marker}"
 
 typeset -g _prompt_transient=$_ps_marker

@@ -50,7 +50,7 @@ typeset -g _ps_ret=''
 typeset -g _ps_host=''
 
 if [[ -n $SSH_CONNECTION || -n $SSH_CLIENT || -n $SSH_TTY ]]; then
-	_ps_host="   %F{#ff2bd6}${_pg_host} ${HOST:l}%f"
+	_ps_host="   %F{#1e90ff}${_pg_host} ${HOST:l}%f"
 fi
 
 typeset -g _ps_marker='%F{#39ff14}❯%F{#22990c}▁%f '
